@@ -179,5 +179,6 @@ input:focus,select:focus,textarea:focus{border-color:var(--gold);box-shadow:0 0 
 #tables-list,#staff-notifications,#kitchen-list,#staff-reservations,#staff-move-requests,#staff-orders{max-height:calc(100vh - 260px);overflow-y:auto;padding-right:8px;overscroll-behavior:contain}
 #pos-menu{max-height:calc(100vh - 300px);overflow-y:auto;padding-right:8px;overscroll-behavior:contain}
 .pos-cart{max-height:calc(100vh - 180px);overflow-y:auto;overscroll-behavior:contain}
+.menu-image{overflow:hidden;isolation:isolate}
 .menu-image img{display:block;width:100%;height:100%;object-fit:cover;object-position:center;border-radius:inherit}
 @media(max-width:850px){.admin-content,#tables-list,#staff-notifications,#kitchen-list,#staff-reservations,#staff-move-requests,#staff-orders,#pos-menu,.pos-cart{max-height:calc(100vh - 220px)}}

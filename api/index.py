@@ -205,11 +205,15 @@ def normalize_available_table(table):
     if not table or table.get("status") != "available":
         return table
     members = table_members(table)
-    if members and not table.get("claimed_by") and not table.get("current_order_id"):
-        cleaned = {"occupant_ids": [], "party_size": None, "split_requested": False}
-        patch(f"tables/{table['id']}", cleaned)
-        return {**table, **cleaned}
+    if members:
+        repaired = {"status": "occupied", "claimed_by": table.get("claimed_by") or members[0], "occupant_ids": members}
+        patch(f"tables/{table['id']}", repaired)
+        return {**table, **repaired}
     if not table.get("claimed_by") and not table.get("current_order_id"):
+        if table.get("party_size") is not None or table.get("occupant_ids"):
+            cleaned = {"party_size": None, "occupant_ids": [], "split_requested": False}
+            patch(f"tables/{table['id']}", cleaned)
+            return {**table, **cleaned}
         return table
     order = find_by_id("orders", table.get("current_order_id")) if table.get("current_order_id") else None
     if order and order.get("status") not in ("closed", "merged", "cancelled"):
@@ -268,6 +272,10 @@ def repair_stale_tables():
             continue
         members = table_members(table)
         active = [o for o in (orders.values() if isinstance(orders, dict) else []) if o.get("table_id") == table.get("id") and o.get("status") not in {"closed", "merged", "cancelled"}]
+        # A customer can select a table before placing the first order. Keep
+        # that shared table occupied so other clients see the same members.
+        if members:
+            continue
         # Do not leave a table occupied merely because old membership fields
         # survived after its open bill was cancelled during logout/expiry.
         if not active:
@@ -921,7 +929,7 @@ class handler(BaseHTTPRequestHandler):
                 for item in final_items:
                     item["customer_id"] = profile.get("id")
                 existing = find_by_id("orders", table.get("current_order_id")) if table.get("current_order_id") else None
-                if existing and existing.get("status") not in ("closed", "merged"):
+                if existing and existing.get("status") not in ("closed", "merged", "cancelled"):
                     order_id = existing["id"]
                     all_items = existing.get("items", []) + final_items
                     bill = calculate_bill(all_items, existing.get("discount", 0))

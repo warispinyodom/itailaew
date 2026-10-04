@@ -157,6 +157,11 @@ const App = (() => {
           }
         } catch (_) { }
       }
+      if (state.user.role === "customer" && state.selectedTable) {
+        // Rehydrate active-order state before refreshNav; otherwise the Bill
+        // button disappears after a hard refresh even though the order exists.
+        try { await loadCustomer(); } catch (_) { }
+      }
       refreshNav();
       const savedPage = localStorage.getItem("itailaew_current_page");
       const allowed = ["home","menu","reservation","customer","table-select","cart","admin","staff","tables","pos"];
@@ -210,6 +215,13 @@ const App = (() => {
   function loadUserStorage(){ if(!state.user)return; try{state.cart=JSON.parse(localStorage.getItem(cartKey())||"{}");}catch(_){state.cart={};} try{state.selectedTable=JSON.parse(localStorage.getItem(tableKey())||"null");}catch(_){state.selectedTable=null;} }
   function persistCart(){ if(state.user) localStorage.setItem(cartKey(), JSON.stringify(state.cart||{})); }
   function selectedTable(){ return state.selectedTable; }
+  async function syncLiveCustomerTable(){
+    if(state.user?.role!=="customer") return null;
+    const d=await api("/api/customer/tables");
+    const mine=d.tables.find(t=>tableHasCurrentUser(t));
+    if(mine){state.selectedTable=mine;localStorage.setItem(tableKey(),JSON.stringify(mine));refreshNav();}
+    return mine||null;
+  }
   function clearSelectedTable(){ state.selectedTable=null; if(state.user)localStorage.removeItem(tableKey()); refreshNav(); }
   function clearCustomerSessionData(){ state.cart={}; state.selectedTable=null; state.hadActiveOrder=false; if(state.user){localStorage.removeItem(cartKey());localStorage.removeItem(tableKey());} refreshNav(); }
   function tableHasCurrentUser(table){ return !!(table && state.user && ((Array.isArray(table.occupant_ids) && table.occupant_ids.includes(state.user.id)) || table.claimed_by === state.user.id)); }
@@ -234,8 +246,8 @@ const App = (() => {
   function cartAdd(key,delta){if(!state.cart[key])return;state.cart[key].quantity+=delta;if(state.cart[key].quantity<=0)delete state.cart[key];persistCart();renderCart()}
   function clearCart(){state.cart={};persistCart();renderCart()}
   async function submitCart(){
-    if(!selectedTable()) return toast("กรุณาเลือกโต๊ะก่อน"); const items=Object.values(state.cart).map(x=>({menu_id:x.menu_id,quantity:x.quantity,options:x.options||{}})); if(!items.length)return toast("กรุณาเพิ่มอาหารลงตะกร้า");
-    try{await api("/api/customer/orders",{method:"POST",body:JSON.stringify({table_id:selectedTable().id,party_size:selectedTable().party_size,items})});clearCart();toast("ส่งออเดอร์เข้าครัวแล้ว");go("customer")}catch(e){toast(e.message)}
+    try{const live=await syncLiveCustomerTable();if(!live)return toast("ไม่พบโต๊ะที่คุณเข้าร่วม กรุณาเลือกโต๊ะใหม่"); const items=Object.values(state.cart).map(x=>({menu_id:x.menu_id,quantity:x.quantity,options:x.options||{}})); if(!items.length)return toast("กรุณาเพิ่มอาหารลงตะกร้า");
+    await api("/api/customer/orders",{method:"POST",body:JSON.stringify({table_id:live.id,party_size:live.party_size,items})});clearCart();toast("ส่งออเดอร์เข้าครัวแล้ว");go("customer")}catch(e){toast(e.message)}
   }
   async function loadCustomerTables(){
     try{const d=await api("/api/customer/tables");$("customer-tables").innerHTML=d.tables.map(t=>{const capacity=Number(t.capacity||4);const members=Number(t.occupant_count||0);const joinable=!!t.joinable;const available=t.status==="available";const disabled=!available&&!joinable;const info=available?"โต๊ะว่างพร้อมให้เลือก":joinable?`มีลูกค้าแล้ว ${members}/${Number(t.party_size)} คน · เหลือ ${Number(t.remaining_people)} ที่`:`โต๊ะเต็มแล้ว (${members}/${Number(t.party_size||capacity)} คน)`;return `<div class="table-card"><div class="top"><h3>โต๊ะ ${escapeHtml(t.table_number)}</h3><span class="badge ${escapeHtml(t.status)}">${escapeHtml(t.status)}</span></div><div class="info">${info}<br>ความจุสูงสุด ${capacity} คน</div><button class="primary full" ${disabled?"disabled":""} onclick="App.claimTable('${t.id}')">${available?"เลือกโต๊ะนี้":joinable?"เข้าร่วมโต๊ะ":"โต๊ะเต็ม"}</button></div>`}).join("")}catch(e){toast(e.message)}
@@ -305,8 +317,9 @@ const App = (() => {
   }
   async function submitMoveRequest(e){e.preventDefault();try{const d=await api("/api/customer/table-move-requests",{method:"POST",body:JSON.stringify({new_table_id:$('move-target').value})});closeModal();toast(d.message||"ส่งคำขอย้ายโต๊ะให้ Staff แล้ว")}catch(e){toast(e.message)}}
   async function requestSplitBill(){
-    try {
-      const d=await api("/api/customer/split-bill-requests",{method:"POST",body:JSON.stringify({table_id:selectedTable()?.id})});
+    try{
+      const live=await syncLiveCustomerTable(); if(!live)return toast("กรุณาเลือกโต๊ะก่อนขอแยกบิล");
+      const d=await api("/api/customer/split-bill-requests",{method:"POST",body:JSON.stringify({table_id:live.id})});
       const members=d.members||[]; const names={}; members.forEach(id=>{names[id]=id===state.user.id?"ฉัน":id});
       const orders=(d.orders||[]).filter(o=>!['closed','merged','cancelled'].includes(o.status));
       const rows=orders.map(order=>`<div class="list-card" style="margin:8px 0"><b>${order.bill_group==='split'?'บิลย่อย':'บิลกลาง'} · ${escapeHtml(order.id)}</b>${(order.items||[]).map((it,i)=>`<label class="table-row" style="gap:10px"><span style="flex:1">${escapeHtml(it.name||'เมนู')} × ${Number(it.quantity||0)}<small class="small" style="display:block">฿${(Number(it.unit_price||0)*Number(it.quantity||0)).toFixed(2)}</small></span><select class="split-owner" data-order="${escapeAttr(order.id)}" data-index="${i}">${members.map(id=>`<option value="${escapeAttr(id)}" ${String(it.customer_id||d.default_owner)===String(id)?'selected':''}>${escapeHtml(names[id])}</option>`).join('')}</select></label>`).join('')}</div>`).join('');
@@ -317,7 +330,8 @@ const App = (() => {
     try { const assignments=[...document.querySelectorAll('.split-owner')].map(x=>({order_id:x.dataset.order,item_index:Number(x.dataset.index),customer_id:x.value})); const d=await api('/api/customer/split-bill-requests',{method:'POST',body:JSON.stringify({table_id:tableId,assignments})}); closeModal(); toast(d.message||'บันทึกการแยกบิลแล้ว'); loadCustomer(); } catch(e){toast(e.message)}
   }
   async function requestBill(){
-    const all=(await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id||"")}`)).orders.filter(x=>!['closed','merged','cancelled'].includes(x.status)); const o=all.find(x=>x.customer_id===state.user.id)||all.find(x=>x.bill_group==='central')||all[0]; if(!o)return toast("ยังไม่มีบิลที่เปิดอยู่");
+    const live=await syncLiveCustomerTable(); if(!live)return toast("กรุณาเลือกโต๊ะก่อนเช็คบิล");
+    const all=(await api(`/api/orders?table_id=${encodeURIComponent(live.id)}`)).orders.filter(x=>!['closed','merged','cancelled'].includes(x.status)); const o=all.find(x=>x.customer_id===state.user.id)||all.find(x=>x.bill_group==='central')||all[0]; if(!o)return toast("ยังไม่มีบิลที่เปิดอยู่");
     try{
       const b=await api(`/api/orders/${o.id}/bill?discount=0`);
       const points=Number(b.customer_points ?? state.user?.member_points ?? 0); const maxUsable=Math.floor(points/100)*100;
