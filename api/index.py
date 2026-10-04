@@ -16,7 +16,7 @@ try:
         RESTAURANT_NAME, RESTAURANT_TAGLINE, POLL_INTERVAL_SECONDS,
         BOOTSTRAP_SECRET, FIREBASE_STORAGE_BUCKET, FIREBASE_DB_URL, is_configured, is_local_mode
     )
-    from .firebase import get, put, patch, post, delete, FirebaseError
+    from .firebase import get, put, patch, post, delete, transaction, FirebaseError
     from .auth import (
         firebase_signup, firebase_signin, verify_id_token, require_user, require_role,
         safe_email, validate_password, create_profile, get_profile, list_users,
@@ -33,7 +33,7 @@ except ImportError:
         RESTAURANT_NAME, RESTAURANT_TAGLINE, POLL_INTERVAL_SECONDS,
         BOOTSTRAP_SECRET, FIREBASE_STORAGE_BUCKET, FIREBASE_DB_URL, is_configured, is_local_mode
     )
-    from firebase import get, put, patch, post, delete, FirebaseError
+    from firebase import get, put, patch, post, delete, transaction, FirebaseError
     from auth import (
         firebase_signup, firebase_signin, verify_id_token, require_user, require_role,
         safe_email, validate_password, create_profile, get_profile, list_users,
@@ -204,6 +204,11 @@ def normalize_available_table(table):
     """Repair stale claims so an available table can be selected."""
     if not table or table.get("status") != "available":
         return table
+    members = table_members(table)
+    if members and not table.get("claimed_by") and not table.get("current_order_id"):
+        cleaned = {"occupant_ids": [], "party_size": None, "split_requested": False}
+        patch(f"tables/{table['id']}", cleaned)
+        return {**table, **cleaned}
     if not table.get("claimed_by") and not table.get("current_order_id"):
         return table
     order = find_by_id("orders", table.get("current_order_id")) if table.get("current_order_id") else None
@@ -443,7 +448,7 @@ class handler(BaseHTTPRequestHandler):
                 expire_overdue_reservations()
                 repair_stale_tables()
                 tables = get("tables") or {}
-                values = list(tables.values()) if isinstance(tables, dict) else []
+                values = [normalize_available_table(t) for t in tables.values()] if isinstance(tables, dict) else []
                 return response(self, 200, {"ok": True, "tables": values})
 
             if path == "/api/reservations":
@@ -783,25 +788,29 @@ class handler(BaseHTTPRequestHandler):
             if path == "/api/customer/tables/claim":
                 require_role(profile, "customer")
                 table_id = clean_text(data.get("table_id"), "โต๊ะ", 50)
-                table = normalize_available_table(find_by_id("tables", table_id))
-                if not table:
-                    raise ValueError("ไม่พบโต๊ะ")
+                uid = str(profile.get("id"))
+                meta = {"joined": False, "already": False}
+                def claim_update(current):
+                    if not isinstance(current, dict):
+                        raise ValueError("ไม่พบโต๊ะ")
+                    members = table_members(current)
+                    if uid in members:
+                        meta["already"] = True
+                        return {**current, "occupant_ids": members}
+                    if current.get("status") == "reserved":
+                        raise ValueError("โต๊ะนี้มีการจองไว้ กรุณาเลือกโต๊ะอื่น")
+                    if current.get("status") == "available" and not members:
+                        return {**current, "status": "occupied", "claimed_by": uid, "occupant_ids": [uid]}
+                    limit = int(current.get("party_size") or 0)
+                    if current.get("status") in ("occupied", "waiting_bill") and limit and len(members) < limit:
+                        meta["joined"] = True
+                        return {**current, "occupant_ids": members + [uid]}
+                    raise ValueError("โต๊ะนี้เต็มแล้ว กรุณาเลือกโต๊ะอื่น")
+                table = transaction(f"tables/{table_id}", claim_update)
                 members = table_members(table)
-                if table.get("status") == "reserved":
-                    raise ValueError("โต๊ะนี้มีการจองไว้ กรุณาเลือกโต๊ะอื่น")
-                if profile.get("id") in members:
-                    return response(self, 200, {"ok": True, "table": {**table, "occupant_ids": members}, "claimed": True, "joined": False})
-                if table.get("status") == "available" and not members:
-                    patch(f"tables/{table_id}", {"status": "occupied", "claimed_by": profile["id"], "occupant_ids": [profile["id"]]})
-                    table = {**table, "status": "occupied", "claimed_by": profile["id"], "occupant_ids": [profile["id"]]}
+                if not meta["already"]:
                     audit(profile, "CLAIM_TABLE", "table", table_id)
-                    return response(self, 200, {"ok": True, "table": table, "claimed": True, "joined": False})
-                limit = int(table.get("party_size") or 0)
-                if table.get("status") in ("occupied", "waiting_bill") and limit and len(members) < limit:
-                    members.append(profile["id"])
-                    patch(f"tables/{table_id}", {"occupant_ids": members})
-                    return response(self, 200, {"ok": True, "table": {**table, "occupant_ids": members, "claimed_by": table.get("claimed_by")}, "claimed": True, "joined": True})
-                raise ValueError("โต๊ะนี้เต็มแล้ว กรุณาเลือกโต๊ะอื่น")
+                return response(self, 200, {"ok": True, "table": {**table, "occupant_ids": members}, "claimed": True, "joined": meta["joined"]})
             if path == "/api/customer/tables/confirm":
                 require_role(profile, "customer")
                 table_id = clean_text(data.get("table_id"), "โต๊ะ", 50)

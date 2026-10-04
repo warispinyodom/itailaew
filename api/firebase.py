@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import threading
+import time
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -17,6 +18,8 @@ class FirebaseError(Exception):
 
 
 _FILE_LOCK = threading.RLock()
+_GET_CACHE = {}
+_GET_CACHE_TTL = 0.25
 
 
 def _url(path, auth=True):
@@ -142,9 +145,18 @@ def _local_delete(path):
 
 def request(method, path, payload=None, auth=True, timeout=12):
     try:
+        cache_key = (method, str(path), bool(auth))
+        if method == "GET":
+            cached = _GET_CACHE.get(cache_key)
+            if cached and (time.time() - cached[0]) < _GET_CACHE_TTL:
+                return copy.deepcopy(cached[1])
+        if method != "GET":
+            _GET_CACHE.clear()
         if is_local_mode():
             if method == "GET":
-                return _local_get(path)
+                result = _local_get(path)
+                _GET_CACHE[cache_key] = (time.time(), copy.deepcopy(result))
+                return result
             if method == "PUT":
                 return _local_set(path, payload)
             if method == "PATCH":
@@ -164,7 +176,10 @@ def request(method, path, payload=None, auth=True, timeout=12):
         req = urllib.request.Request(_url(path, auth=auth), data=body, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
-            return json.loads(raw) if raw else None
+            result = json.loads(raw) if raw else None
+            if method == "GET":
+                _GET_CACHE[cache_key] = (time.time(), copy.deepcopy(result))
+            return result
     except urllib.error.HTTPError as exc:
         try:
             detail = exc.read().decode("utf-8")
@@ -199,3 +214,40 @@ def post(path, payload):
 
 def delete(path):
     return request("DELETE", path)
+
+
+def transaction(path, updater, retries=5):
+    """Atomically update one Firebase node using ETags."""
+    if is_local_mode():
+        with _FILE_LOCK:
+            current = _local_get(path)
+            updated = updater(copy.deepcopy(current))
+            return _local_set(path, updated)
+    if not FIREBASE_DB_URL:
+        raise FirebaseError("ยังไม่ได้ตั้งค่า FIREBASE_DB_URL")
+    for _ in range(max(1, retries)):
+        url = _url(path)
+        get_req = urllib.request.Request(url, headers={"X-Firebase-ETag": "true"}, method="GET")
+        try:
+            with urllib.request.urlopen(get_req, timeout=12) as res:
+                raw = res.read().decode("utf-8")
+                current = json.loads(raw) if raw else None
+                etag = res.headers.get("ETag")
+            updated = updater(copy.deepcopy(current))
+            body = json.dumps(updated, ensure_ascii=False).encode("utf-8")
+            put_req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "If-Match": etag or "*"}, method="PUT")
+            with urllib.request.urlopen(put_req, timeout=12) as res:
+                raw = res.read().decode("utf-8")
+                _GET_CACHE.clear()
+                return json.loads(raw) if raw else updated
+        except urllib.error.HTTPError as exc:
+            if exc.code == 412:
+                continue
+            try:
+                detail = exc.read().decode("utf-8")[:300]
+            except Exception:
+                detail = str(exc)
+            raise FirebaseError(f"Firebase transaction HTTP {exc.code}: {detail}")
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise FirebaseError(f"เชื่อมต่อฐานข้อมูลไม่สำเร็จ: {exc}")
+    raise FirebaseError("ข้อมูลโต๊ะมีการเปลี่ยนพร้อมกันหลายคน กรุณากดเลือกโต๊ะอีกครั้ง")

@@ -172,3 +172,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--gold);box-shadow:0 0 
 .kitchen-bill{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px}
 .kitchen-bill-head{display:flex;justify-content:space-between;gap:12px;padding:4px 6px 8px;border-bottom:1px solid var(--line);color:var(--wine)}
 .staff-notifications{max-height:260px;overflow:auto}
+
+/* Fixed viewport panels: scroll inside each management area instead of stretching the page. */
+.admin-content{max-height:calc(100vh - 260px);overflow-y:auto;padding:0 8px 12px 0;overscroll-behavior:contain}
+.admin-content .list-card{overflow:auto}
+#tables-list,#staff-notifications,#kitchen-list,#staff-reservations,#staff-move-requests,#staff-orders{max-height:calc(100vh - 260px);overflow-y:auto;padding-right:8px;overscroll-behavior:contain}
+#pos-menu{max-height:calc(100vh - 300px);overflow-y:auto;padding-right:8px;overscroll-behavior:contain}
+.pos-cart{max-height:calc(100vh - 180px);overflow-y:auto;overscroll-behavior:contain}
+.menu-image img{display:block;width:100%;height:100%;object-fit:cover;object-position:center;border-radius:inherit}
+@media(max-width:850px){.admin-content,#tables-list,#staff-notifications,#kitchen-list,#staff-reservations,#staff-move-requests,#staff-orders,#pos-menu,.pos-cart{max-height:calc(100vh - 220px)}}
