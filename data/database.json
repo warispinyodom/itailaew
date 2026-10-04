@@ -1,19 +1,11 @@
 {
-  "users": {
-    "local_fcd87db8733a4a76": {
-      "id": "local_fcd87db8733a4a76",
-      "email": "admin@itailaew.com",
-      "name": "itailaew Admin",
-      "role": "admin",
-      "member_points": 0,
-      "active": true,
-      "password_hash": "pbkdf2_sha256$120000$360800526b0cd3ee3d7dfa36638b0b3f$57ac8873de5d31cd5fa74cc99e467bfbe407e8e53a58d36f284ad917db27230a"
-    },
-    "local_789bb87b07dd4ef3": {
-      "id": "local_789bb87b07dd4ef3",
-      "email": "test1@gmail.com",
-      "name": "test1@gmail.com",
+  "audit_logs": {
+    "-P36p38jbffS_1G4tri7": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_b73746fe4e2f",
       "role": "customer",
+<<<<<<< HEAD
       "member_points": 0,
       "active": true,
       "password_hash": "pbkdf2_sha256$120000$92f72e3560b5458be82215aa8d5d9b57$c845259beefbc1108f06b1aa5f25e6cf6021a21f70db2ffa1042b44e315e220b"
@@ -37,194 +29,426 @@
       "image_url": "",
       "is_out_of_stock": false,
       "options": {}
+=======
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:51:53.208889+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
+>>>>>>> 626431a9c3b4d51c22f5d698460883ff78fbc08e
     },
-    "menu_002": {
-      "id": "menu_002",
-      "name": "Spaghetti Bolognese",
-      "category": "Pasta",
-      "price": 179,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36p3VI_Wd5L_ypdbZf": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_e847b5382583",
+      "role": "customer",
+      "target_id": "table_03",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:51:54.649139+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
     },
-    "menu_003": {
-      "id": "menu_003",
-      "name": "Fettuccine Alfredo",
-      "category": "Pasta",
-      "price": 199,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36p3gNHBBrlZUzek4x": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_c3d9ad1b0a29",
+      "role": "customer",
+      "target_id": "table_06",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:51:55.427956+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
     },
-    "menu_004": {
-      "id": "menu_004",
-      "name": "Margherita Pizza",
-      "category": "Pizza",
-      "price": 249,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36p6pFsGy1OSEpAoqH": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_cc120e5a016c",
+      "role": "customer",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:52:08.284817+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
     },
-    "menu_005": {
-      "id": "menu_005",
-      "name": "Pepperoni Pizza",
-      "category": "Pizza",
-      "price": 289,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36p8LxvaNSBh9Km8dq": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_a7e1032b7a92",
+      "role": "customer",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:52:14.527025+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
     },
-    "menu_006": {
-      "id": "menu_006",
-      "name": "Italian Herb Steak",
-      "category": "Steak",
-      "price": 399,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36qP54NrDbu4u-jxjU": {
+      "action": "CANCEL_EMPTY_TABLE_BILLS",
+      "detail": "ยกเลิกบิลทั้งหมดเพราะไม่มี Customer เหลือ",
+      "id": "log_cfd420a312d7",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:57:45.238946+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2"
     },
-    "menu_007": {
-      "id": "menu_007",
-      "name": "Caesar Salad",
-      "category": "Salad",
-      "price": 149,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36qPCkRwrknP1wB_qT": {
+      "action": "LEAVE_TABLE",
+      "detail": "logout/session expired",
+      "id": "log_cdf9c35a1290",
+      "role": "customer",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:57:45.724621+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
     },
-    "menu_008": {
-      "id": "menu_008",
-      "name": "Tiramisu",
-      "category": "Dessert",
-      "price": 129,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "-P36qPO262v8ZOj7CsIT": {
+      "action": "LEAVE_TABLE",
+      "detail": "logout/session expired",
+      "id": "log_163f8dc6cce6",
+      "role": "customer",
+      "target_id": "",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:57:46.457530+00:00",
+      "user_id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "user_name": "num"
     },
-    "menu_009": {
-      "id": "menu_009",
-      "name": "Panna Cotta",
-      "category": "Dessert",
-      "price": 119,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
+    "3f68264d315d496e9c14": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_53ce556cc98c",
+      "role": "customer",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:19:12.408227+00:00",
+      "user_id": "local_8fa52f9271074be3",
+      "user_name": "test"
     },
-    "menu_010": {
-      "id": "menu_010",
-      "name": "Italian Espresso",
-      "category": "Drinks",
-      "price": 75,
-      "image_url": "",
-      "is_out_of_stock": false,
-      "options": {}
-    }
-  },
-  "tables": {
-    "table_01": {
-      "id": "table_01",
-      "table_number": "01",
-      "status": "occupied",
-      "current_order_id": "order_2d05ed04c25d",
-      "capacity": 4,
-      "claimed_by": "local_789bb87b07dd4ef3",
-      "occupant_ids": [
-        "local_789bb87b07dd4ef3"
-      ],
-      "party_size": 1,
-      "current_round_id": "order_2d05ed04c25d"
+    "9b7c478a23914669b7f2": {
+      "action": "CLAIM_TABLE",
+      "detail": "",
+      "id": "log_70eb7418d2b6",
+      "role": "customer",
+      "target_id": "table_01",
+      "target_type": "table",
+      "timestamp": "2026-10-04T13:45:59.367223+00:00",
+      "user_id": "local_789bb87b07dd4ef3",
+      "user_name": "test1@gmail.com"
     },
-    "table_02": {
-      "id": "table_02",
-      "table_number": "02",
-      "status": "available",
-      "current_order_id": null,
-      "capacity": 4
+    "b74e5a9159524560964d": {
+      "action": "CANCEL_EMPTY_TABLE_BILLS",
+      "detail": "ยกเลิกบิลทั้งหมดเพราะไม่มี Customer เหลือ",
+      "id": "log_f81901201e23",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:20:03.369279+00:00",
+      "user_id": "local_8fa52f9271074be3"
     },
-    "table_03": {
-      "id": "table_03",
-      "table_number": "03",
-      "status": "available",
-      "current_order_id": null,
-      "capacity": 4
+    "ca96a3b5dac74fa39990": {
+      "action": "CANCEL_BILL_ON_LOGOUT",
+      "detail": "ยกเลิกบิลของ Customer ที่ Logout",
+      "id": "log_14a97ffe879a",
+      "target_id": "order_e7b68c402a87",
+      "target_type": "order",
+      "timestamp": "2026-10-04T16:20:03.363180+00:00",
+      "user_id": "local_8fa52f9271074be3"
     },
-    "table_04": {
-      "id": "table_04",
-      "table_number": "04",
-      "status": "available",
-      "current_order_id": null,
-      "capacity": 4
-    },
-    "table_05": {
-      "id": "table_05",
-      "table_number": "05",
-      "status": "available",
-      "current_order_id": null,
-      "capacity": 4
-    },
-    "table_06": {
-      "id": "table_06",
-      "table_number": "06",
-      "status": "available",
-      "current_order_id": null,
-      "capacity": 4
-    }
-  },
-  "reservations": {},
-  "orders": {
-    "order_2d05ed04c25d": {
-      "id": "order_2d05ed04c25d",
-      "table_id": "table_01",
-      "table_number": "01",
-      "customer_id": "local_789bb87b07dd4ef3",
-      "party_size": 1,
-      "items": [
-        {
-          "menu_id": "menu_007",
-          "name": "Caesar Salad",
-          "unit_price": 149.0,
-          "base_price": 149.0,
-          "quantity": 1,
-          "options": {},
-          "customer_id": "local_789bb87b07dd4ef3"
-        }
-      ],
-      "subtotal": 149.0,
-      "discount": 0.0,
-      "service_charge": 14.9,
-      "tax": 11.47,
-      "total": 175.37,
-      "status": "open",
-      "created_by": "local_789bb87b07dd4ef3",
-      "created_at": "2026-10-04T13:46:07.771164+00:00",
-      "source": "qr",
-      "round_id": "order_2d05ed04c25d"
+    "d3fc2b214cae44acbc52": {
+      "action": "LEAVE_TABLE",
+      "detail": "logout/session expired",
+      "id": "log_bf486b3fbb68",
+      "role": "customer",
+      "target_id": "table_02",
+      "target_type": "table",
+      "timestamp": "2026-10-04T16:20:03.371467+00:00",
+      "user_id": "local_8fa52f9271074be3",
+      "user_name": "test"
     }
   },
   "kitchen": {
     "kit_94f98f31c5f4": {
       "id": "kit_94f98f31c5f4",
+      "menu_name": "Caesar Salad",
       "order_id": "order_2d05ed04c25d",
       "order_item_id": "order_2d05ed04c25d_menu_007",
-      "menu_name": "Caesar Salad",
-      "options": {},
-      "table_number": "01",
       "quantity": 1,
       "status": "pending",
+      "table_number": "01",
       "timestamp": "2026-10-04T13:46:07.777402+00:00"
+    },
+    "kit_e6d579cbd9c8": {
+      "id": "kit_e6d579cbd9c8",
+      "menu_name": "Caesar Salad",
+      "order_id": "order_e7b68c402a87",
+      "order_item_id": "order_e7b68c402a87_menu_007",
+      "quantity": 1,
+      "status": "pending",
+      "table_number": "02",
+      "timestamp": "2026-10-04T16:19:23.025407+00:00"
     }
   },
-  "audit_logs": {
-    "9b7c478a23914669b7f2": {
-      "id": "log_70eb7418d2b6",
-      "user_id": "local_789bb87b07dd4ef3",
-      "user_name": "test1@gmail.com",
-      "role": "customer",
-      "action": "CLAIM_TABLE",
-      "target_type": "table",
-      "target_id": "table_01",
-      "detail": "",
-      "timestamp": "2026-10-04T13:45:59.367223+00:00"
+  "menus": {
+    "menu_001": {
+      "category": "อาหาร",
+      "id": "menu_001",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Spaghetti Carbonara",
+      "price": 189
+    },
+    "menu_002": {
+      "category": "อาหาร",
+      "id": "menu_002",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Spaghetti Bolognese",
+      "price": 179
+    },
+    "menu_003": {
+      "category": "อาหาร",
+      "id": "menu_003",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Fettuccine Alfredo",
+      "price": 199
+    },
+    "menu_004": {
+      "category": "อาหาร",
+      "id": "menu_004",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Margherita Pizza",
+      "price": 249
+    },
+    "menu_005": {
+      "category": "อาหาร",
+      "id": "menu_005",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Pepperoni Pizza",
+      "price": 289
+    },
+    "menu_006": {
+      "category": "อาหาร",
+      "id": "menu_006",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Italian Herb Steak",
+      "price": 399
+    },
+    "menu_007": {
+      "category": "อาหาร",
+      "id": "menu_007",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Caesar Salad",
+      "price": 149
+    },
+    "menu_008": {
+      "category": "ของหวาน",
+      "id": "menu_008",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Tiramisu",
+      "price": 129
+    },
+    "menu_009": {
+      "category": "ของหวาน",
+      "id": "menu_009",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Panna Cotta",
+      "price": 119
+    },
+    "menu_010": {
+      "category": "เครื่องดื่ม",
+      "id": "menu_010",
+      "image_url": "",
+      "is_out_of_stock": false,
+      "name": "Italian Espresso",
+      "price": 75
     }
-  }
+  },
+  "notifications": {
+    "notice_63b08cd79e34": {
+      "created_at": "2026-10-04T16:19:23.028421+00:00",
+      "detail": "โต๊ะ 02",
+      "id": "notice_63b08cd79e34",
+      "kind": "new_order",
+      "read": false,
+      "target_id": "order_e7b68c402a87",
+      "title": "มีออเดอร์ใหม่"
+    },
+    "notice_92d18f728d56": {
+      "created_at": "2026-10-04T16:19:29.192294+00:00",
+      "detail": "โต๊ะ 02",
+      "id": "notice_92d18f728d56",
+      "kind": "split_request",
+      "read": false,
+      "target_id": "table_02",
+      "title": "มีคำขอแยกบิล"
+    },
+    "notice_c9c255ba4288": {
+      "created_at": "2026-10-04T16:19:25.860260+00:00",
+      "detail": "โต๊ะ 02",
+      "id": "notice_c9c255ba4288",
+      "kind": "split_request",
+      "read": false,
+      "target_id": "table_02",
+      "title": "มีคำขอแยกบิล"
+    },
+    "notice_f8594457e4a1": {
+      "created_at": "2026-10-04T16:19:32.248194+00:00",
+      "detail": "โต๊ะ 02",
+      "id": "notice_f8594457e4a1",
+      "kind": "checkout_request",
+      "read": false,
+      "target_id": "order_e7b68c402a87",
+      "title": "ลูกค้าเรียกเช็คบิล"
+    }
+  },
+  "orders": {
+    "order_2d05ed04c25d": {
+      "created_at": "2026-10-04T13:46:07.771164+00:00",
+      "created_by": "local_789bb87b07dd4ef3",
+      "customer_id": "local_789bb87b07dd4ef3",
+      "discount": 0,
+      "id": "order_2d05ed04c25d",
+      "items": [
+        {
+          "base_price": 149,
+          "customer_id": "local_789bb87b07dd4ef3",
+          "menu_id": "menu_007",
+          "name": "Caesar Salad",
+          "quantity": 1,
+          "unit_price": 149
+        }
+      ],
+      "party_size": 1,
+      "round_id": "order_2d05ed04c25d",
+      "service_charge": 14.9,
+      "source": "qr",
+      "status": "open",
+      "subtotal": 149,
+      "table_id": "table_01",
+      "table_number": "01",
+      "tax": 11.47,
+      "total": 175.37
+    },
+    "order_e7b68c402a87": {
+      "cancelled_at": "2026-10-04T16:20:03.359808+00:00",
+      "cancelled_reason": "Customer ออกจากระบบ",
+      "checkout_requested_at": "2026-10-04T16:19:32.241178+00:00",
+      "created_at": "2026-10-04T16:19:23.019046+00:00",
+      "created_by": "local_8fa52f9271074be3",
+      "customer_id": "local_8fa52f9271074be3",
+      "discount": 0,
+      "id": "order_e7b68c402a87",
+      "items": [
+        {
+          "base_price": 149,
+          "customer_id": "local_8fa52f9271074be3",
+          "menu_id": "menu_007",
+          "name": "Caesar Salad",
+          "quantity": 1,
+          "unit_price": 149
+        }
+      ],
+      "party_size": 1,
+      "points_to_use": 0,
+      "round_id": "order_e7b68c402a87",
+      "service_charge": 14.9,
+      "source": "qr",
+      "status": "cancelled",
+      "subtotal": 149,
+      "table_id": "table_02",
+      "table_number": "02",
+      "tax": 11.47,
+      "total": 175.37
+    }
+  },
+  "tables": {
+    "table_01": {
+      "capacity": 4,
+      "claimed_by": "local_789bb87b07dd4ef3",
+      "current_order_id": "order_2d05ed04c25d",
+      "current_round_id": "order_2d05ed04c25d",
+      "id": "table_01",
+      "occupant_ids": [
+        "local_789bb87b07dd4ef3"
+      ],
+      "party_size": 1,
+      "status": "occupied",
+      "table_number": "01"
+    },
+    "table_02": {
+      "capacity": 4,
+      "id": "table_02",
+      "split_requested": false,
+      "status": "available",
+      "table_number": "02"
+    },
+    "table_03": {
+      "capacity": 4,
+      "id": "table_03",
+      "status": "available",
+      "table_number": "03"
+    },
+    "table_04": {
+      "capacity": 4,
+      "id": "table_04",
+      "status": "available",
+      "table_number": "04"
+    },
+    "table_05": {
+      "capacity": 4,
+      "id": "table_05",
+      "status": "available",
+      "table_number": "05"
+    },
+    "table_06": {
+      "capacity": 4,
+      "id": "table_06",
+      "status": "available",
+      "table_number": "06"
+    }
+  },
+  "users": {
+    "dZ7M6irr9udSD60qGZte45KtgHq2": {
+      "active": true,
+      "email": "numunum99@gmail.com",
+      "id": "dZ7M6irr9udSD60qGZte45KtgHq2",
+      "member_points": 0,
+      "name": "num",
+      "role": "customer"
+    },
+    "local_789bb87b07dd4ef3": {
+      "active": true,
+      "email": "test1@gmail.com",
+      "id": "local_789bb87b07dd4ef3",
+      "member_points": 0,
+      "name": "test1@gmail.com",
+      "password_hash": "pbkdf2_sha256$120000$92f72e3560b5458be82215aa8d5d9b57$c845259beefbc1108f06b1aa5f25e6cf6021a21f70db2ffa1042b44e315e220b",
+      "role": "customer"
+    },
+    "local_8fa52f9271074be3": {
+      "active": true,
+      "email": "test@gmail.com",
+      "id": "local_8fa52f9271074be3",
+      "member_points": 0,
+      "name": "test",
+      "password_hash": "pbkdf2_sha256$120000$5b92968e47742de56a2945895e6006e1$50572f80e439bb58984bd54fb5c0e37f9de94ec1a44d84c11b6c79b2eb519d5c",
+      "role": "customer"
+    },
+    "local_fcd87db8733a4a76": {
+      "active": true,
+      "email": "admin@gmail.com",
+      "id": "local_fcd87db8733a4a76",
+      "member_points": 0,
+      "name": "itailaew Admin",
+      "password_hash": "pbkdf2_sha256$120000$360800526b0cd3ee3d7dfa36638b0b3f$57ac8873de5d31cd5fa74cc99e467bfbe407e8e53a58d36f284ad917db27230a",
+      "role": "admin"
+    }
+  },
+  "reservations": {},
+  "table_move_requests": {}
 }

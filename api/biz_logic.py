@@ -148,9 +148,15 @@ def validate_menu_payload(data):
     name = validate_person_name(name, "ชื่อเมนู")
     price = to_positive_number(data.get("price"), "ราคา")
     options = normalize_options(data.get("options"))
+    image_url = str(data.get("image_url", "")).strip()
+    # The Admin form uploads a local file first; the API then stores only the
+    # resulting Firebase Storage reference. Do not accept pasted image URLs or
+    # base64 data URLs as menu images.
+    if image_url and not (image_url.startswith("/uploads/") or image_url.startswith("https://firebasestorage.googleapis.com/")):
+        raise ValueError("รูปเมนูต้องอัปโหลดเป็นไฟล์ผ่าน Firebase Storage เท่านั้น")
     return {
         "name": name, "category": category, "price": price,
-        "image_url": str(data.get("image_url", "")).strip(),
+        "image_url": image_url,
         "is_out_of_stock": bool(data.get("is_out_of_stock", False)),
         "options": options
     }

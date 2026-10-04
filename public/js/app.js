@@ -39,15 +39,16 @@ const App = (() => {
     if (state.polling) { clearInterval(state.polling); state.polling = null; }
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     $(id)?.classList.add("active");
+    if (id !== "login") localStorage.setItem("itailaew_current_page", id);
     if (id === "home") loadRecommendedMenus();
     if (id === "table-select") { loadCustomerTables(); const back=$("table-back"); if(back) back.classList.toggle("hidden", !!selectedTable()); }
     if (id === "menu") loadMenus();
     if (id === "cart") { renderCart(); }
     if (id === "reservation") { setReservationMinimum(); loadReservations(); }
-    if (id === "customer") { loadCustomer(); state.polling = setInterval(loadCustomer, 3000); }
+    if (id === "customer") { loadCustomer(); state.polling = setInterval(loadCustomer, 8000); }
     if (id === "admin") loadDashboard();
-    if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 3000); }
-    if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 3000); }
+    if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 8000); }
+    if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 8000); }
     if (id === "pos") loadPos();
     window.scrollTo({top:0,behavior:"smooth"});
   }
@@ -92,14 +93,20 @@ const App = (() => {
       const button = $(id);
       if (button) button.classList.toggle("hidden", !(isCustomer && !!selectedTable()));
     });
+    if (isCustomer && !selectedTable()) {
+      ["table-nav", "reservation-nav", "menu-nav", "cart-nav", "bill-nav"].forEach(id => $(id)?.classList.add("hidden"));
+    }
     const billButton = $("bill-nav");
     if (billButton) billButton.classList.toggle("hidden", !(isCustomer && !!selectedTable() && state.hasActiveOrder));
     $("customer-orders-back")?.classList.toggle("hidden", !(isCustomer && state.hasActiveOrder));
   }
 
-  function logout() {
+  async function logout() {
+    if (state.user?.role === "customer" && state.selectedTable && state.token) {
+      try { await api("/api/customer/leave", {method:"POST", body:JSON.stringify({reason:"logout"})}); } catch (_) { }
+    }
     if (state.polling) { clearInterval(state.polling); state.polling = null; }
-    state.user = null; state.token = null; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); state.selectedTable=null; state.cart={};
+    state.user = null; state.token = null; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); localStorage.removeItem("itailaew_current_page"); state.selectedTable=null; state.cart={};
     refreshNav();
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     $("login")?.classList.add("active");
@@ -137,23 +144,54 @@ const App = (() => {
           if (!live || live.status === "available" || !tableHasCurrentUser(live)) clearCustomerSessionData();
         } catch (_) { }
       }
+      // A refresh must recover the table from Firebase, not only from a stale
+      // localStorage snapshot. This also lets a full table recognize its
+      // existing member instead of showing it as a new join attempt.
+      if (state.user.role === "customer" && !state.selectedTable) {
+        try {
+          const tables = await api("/api/customer/tables");
+          const mine = tables.tables.find(t => tableHasCurrentUser(t));
+          if (mine) {
+            state.selectedTable = mine;
+            localStorage.setItem(tableKey(), JSON.stringify(mine));
+          }
+        } catch (_) { }
+      }
       refreshNav();
-      const target = state.user.role === "admin" ? "admin" : state.user.role === "staff" ? "staff" : "home";
+      const savedPage = localStorage.getItem("itailaew_current_page");
+      const allowed = ["home","menu","reservation","customer","table-select","cart","admin","staff","tables","pos"];
+      let target = allowed.includes(savedPage) ? savedPage : (state.user.role === "admin" ? "admin" : state.user.role === "staff" ? "staff" : "home");
+      if (state.user.role === "customer" && !state.selectedTable && ["menu","cart","customer"].includes(target)) target = "table-select";
+      if (state.user.role === "admin") target = ["admin","tables","pos"].includes(target) ? target : "admin";
+      if (state.user.role === "staff") target = ["staff","tables","pos"].includes(target) ? target : "staff";
       document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
       $(target)?.classList.add("active");
+      localStorage.setItem("itailaew_current_page", target);
       if (target === "admin") loadDashboard();
-      if (target === "staff") { loadStaff(); if (!state.polling) state.polling = setInterval(loadStaff, 3000); }
+      if (target === "staff") { loadStaff(); if (!state.polling) state.polling = setInterval(loadStaff, 8000); }
+      if (target === "table-select") loadCustomerTables();
+      if (target === "menu") loadMenus();
+      if (target === "reservation") { setReservationMinimum(); loadReservations(); }
+      if (target === "customer") { loadCustomer(); if (!state.polling) state.polling = setInterval(loadCustomer, 8000); }
+      if (target === "cart") renderCart();
+      if (target === "tables") { loadTables(); if (!state.polling) state.polling = setInterval(loadTables, 8000); }
+      if (target === "pos") loadPos();
     } catch (_) {
-      logout();
+      // Best effort: if the token is still accepted, transfer/clear table ownership
+      // before clearing the expired local session.
+      try { if (state.user?.role === "customer" && state.selectedTable) await api("/api/customer/leave", {method:"POST", body:JSON.stringify({reason:"session_expired"})}); } catch (_) { }
+      await logout();
     }
   }
+
 
   async function loadMenus(page = state.menuPage) {
     try {
       state.menuPage = page;
       const q = encodeURIComponent($("menu-search")?.value || "");
       const sort = $("menu-sort")?.value || "name";
-      const data = await api(`/api/menus?q=${q}&sort=${sort}&page=${page}&page_size=8`);
+      const category = encodeURIComponent($("menu-category")?.value || "");
+      const data = await api(`/api/menus?q=${q}&category=${category}&sort=${sort}&page=${page}&page_size=8`);
       state.menus = data.items;
       const grid = $("menu-grid");
       grid.innerHTML = data.items.map(m => `<article class="menu-card"><div class="menu-image">${m.image_url ? `<img src="${escapeHtml(m.image_url)}" style="width:100%;height:100%;object-fit:cover">` : (m.category==="Pizza"?"🍕":m.category==="Dessert"?"🍰":"🍝")}</div><div class="menu-body"><h3>${escapeHtml(m.name)}</h3><p>${escapeHtml(m.category)}${m.is_out_of_stock ? ' <span class="sold">หมด</span>':''}</p><span class="price">฿${Number(m.price).toFixed(2)}</span>${state.user?.role === "customer" ? `<button type="button" class="secondary" style="float:right;padding:7px 12px" ${m.is_out_of_stock || !selectedTable()?"disabled":""} onclick="App.quickOrder('${m.id}')">+</button>`:""}</div></article>`).join("") || `<div class="list-card">ยังไม่มีเมนู</div>`;
@@ -266,9 +304,20 @@ const App = (() => {
     try{const d=await api("/api/customer/tables");const current=selectedTable()?.id;const free=d.tables.filter(t=>t.status==="available"&&t.id!==current);if(!free.length)return toast("ไม่มีโต๊ะว่างให้ย้าย");openModal(`<h2>ขอย้ายโต๊ะ</h2><p class="small">เลือกโต๊ะปลายทาง แล้วรอ Staff ยืนยัน</p><form onsubmit="App.submitMoveRequest(event)"><label>โต๊ะปลายทาง<select id="move-target">${free.map(t=>`<option value="${escapeAttr(t.id)}">โต๊ะ ${escapeHtml(t.table_number)}</option>`).join("")}</select></label><div class="actions"><button class="primary">ส่งคำขอ</button><button type="button" class="secondary" onclick="App.closeModal()">ยกเลิก</button></div></form>`)}catch(e){toast(e.message)}
   }
   async function submitMoveRequest(e){e.preventDefault();try{const d=await api("/api/customer/table-move-requests",{method:"POST",body:JSON.stringify({new_table_id:$('move-target').value})});closeModal();toast(d.message||"ส่งคำขอย้ายโต๊ะให้ Staff แล้ว")}catch(e){toast(e.message)}}
-  async function requestSplitBill(){try{const d=await api("/api/customer/split-bill-requests",{method:"POST",body:JSON.stringify({table_id:selectedTable()?.id})});toast(d.message||"ส่งคำขอแยกบิลแล้ว")}catch(e){toast(e.message)}}
+  async function requestSplitBill(){
+    try {
+      const d=await api("/api/customer/split-bill-requests",{method:"POST",body:JSON.stringify({table_id:selectedTable()?.id})});
+      const members=d.members||[]; const names={}; members.forEach(id=>{names[id]=id===state.user.id?"ฉัน":id});
+      const orders=(d.orders||[]).filter(o=>!['closed','merged','cancelled'].includes(o.status));
+      const rows=orders.map(order=>`<div class="list-card" style="margin:8px 0"><b>${order.bill_group==='split'?'บิลย่อย':'บิลกลาง'} · ${escapeHtml(order.id)}</b>${(order.items||[]).map((it,i)=>`<label class="table-row" style="gap:10px"><span style="flex:1">${escapeHtml(it.name||'เมนู')} × ${Number(it.quantity||0)}<small class="small" style="display:block">฿${(Number(it.unit_price||0)*Number(it.quantity||0)).toFixed(2)}</small></span><select class="split-owner" data-order="${escapeAttr(order.id)}" data-index="${i}">${members.map(id=>`<option value="${escapeAttr(id)}" ${String(it.customer_id||d.default_owner)===String(id)?'selected':''}>${escapeHtml(names[id])}</option>`).join('')}</select></label>`).join('')}</div>`).join('');
+      openModal(`<h2>เลือกเมนูสำหรับแต่ละบิล</h2><p class="small">ยังคงเป็นโต๊ะเดียวกัน แต่จะแยกเป็นหลายบิล เจ้าของเริ่มต้นคือคนแรกของโต๊ะ และสามารถเปลี่ยนได้ภายหลัง</p><div>${rows||'<p>ไม่มีรายการอาหาร</p>'}</div><div class="actions"><button class="primary" onclick="App.saveSplitOwners('${escapeAttr(selectedTable()?.id||'')}')">บันทึกการแยกบิล</button><button class="secondary" onclick="App.closeModal()">ยกเลิก</button></div>`);
+    } catch(e){toast(e.message)}
+  }
+  async function saveSplitOwners(tableId){
+    try { const assignments=[...document.querySelectorAll('.split-owner')].map(x=>({order_id:x.dataset.order,item_index:Number(x.dataset.index),customer_id:x.value})); const d=await api('/api/customer/split-bill-requests',{method:'POST',body:JSON.stringify({table_id:tableId,assignments})}); closeModal(); toast(d.message||'บันทึกการแยกบิลแล้ว'); loadCustomer(); } catch(e){toast(e.message)}
+  }
   async function requestBill(){
-    const o=(await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id||"")}`)).orders.find(x=>x.status!=="closed"&&x.status!=="merged"); if(!o)return toast("ยังไม่มีบิลที่เปิดอยู่");
+    const all=(await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id||"")}`)).orders.filter(x=>!['closed','merged','cancelled'].includes(x.status)); const o=all.find(x=>x.customer_id===state.user.id)||all.find(x=>x.bill_group==='central')||all[0]; if(!o)return toast("ยังไม่มีบิลที่เปิดอยู่");
     try{
       const b=await api(`/api/orders/${o.id}/bill?discount=0`);
       const points=Number(b.customer_points ?? state.user?.member_points ?? 0); const maxUsable=Math.floor(points/100)*100;
@@ -347,7 +396,7 @@ const App = (() => {
     try{const [m,t]=await Promise.all([api("/api/menus?page=1&page_size=100"),api("/api/tables")]);pos.menus=m.items;pos.tables=t.tables.slice().sort((a,b)=>String(a.table_number).localeCompare(String(b.table_number),undefined,{numeric:true}));const sel=$("pos-table"),keep=sel.value;sel.innerHTML=pos.tables.map(x=>`<option value="${escapeAttr(x.id)}" ${x.status==="reserved"?"disabled":""}>โต๊ะ ${escapeHtml(x.table_number)} (${escapeHtml(x.status)})</option>`).join("");if(keep&&pos.tables.some(x=>x.id===keep&&x.status!=="reserved"))sel.value=keep;renderPos()}catch(e){toast(e.message)}
   }
   function renderPos(){
-    const q=$("pos-search").value.trim().toLowerCase();$("pos-menu").innerHTML=pos.menus.filter(m=>!q||String(m.name).toLowerCase().includes(q)||String(m.category).toLowerCase().includes(q)).map(m=>`<div class="pos-item"><div><b>${escapeHtml(m.name)}</b><span class="small">${escapeHtml(m.category)} · ฿${Number(m.price).toFixed(2)}${m.is_out_of_stock?" · หมด":""}</span></div><button class="secondary" ${m.is_out_of_stock?"disabled":""} onclick="App.posChoose('${m.id}')">+</button></div>`).join("")||`<p class="small">ไม่พบเมนู</p>`;
+    const q=$("pos-search").value.trim().toLowerCase();const category=$("pos-category")?.value||"";$("pos-menu").innerHTML=pos.menus.filter(m=>(!q||String(m.name).toLowerCase().includes(q)||String(m.category).toLowerCase().includes(q))&&(!category||String(m.category)===category)).map(m=>`<div class="pos-item"><div><b>${escapeHtml(m.name)}</b><span class="small">${escapeHtml(m.category)} · ฿${Number(m.price).toFixed(2)}${m.is_out_of_stock?" · หมด":""}</span></div><button class="secondary" ${m.is_out_of_stock?"disabled":""} onclick="App.posChoose('${m.id}')">+</button></div>`).join("")||`<p class="small">ไม่พบเมนู</p>`;
     const ids=Object.keys(pos.cart);let total=0;$("pos-cart").innerHTML=ids.map(key=>{const it=pos.cart[key];total+=Number(it.unit_price)*it.quantity;return `<div class="table-row"><div><b>${escapeHtml(it.name)}</b><div class="small">${Object.entries(it.options||{}).map(([k,v])=>`${escapeHtml(k)}: ${escapeHtml(v)}`).join(" · ")} · ฿${(Number(it.unit_price)*it.quantity).toFixed(2)}</div></div><div class="qty"><button onclick="App.posAdd('${escapeAttr(key)}',-1)">−</button><b>${it.quantity}</b><button onclick="App.posAdd('${escapeAttr(key)}',1)">+</button></div></div>`}).join("")||`<p class="small">ยังไม่ได้เลือกเมนู</p>`;$("pos-total").textContent=`฿${total.toFixed(2)}`;
   }
   function posChoose(menuId){const menu=pos.menus.find(x=>x.id===menuId);if(!menu)return;const fields=Object.entries(menu.options||{}).map(([key,values])=>`<label>${escapeHtml(key)}<select id="pos-opt-${escapeAttr(key)}">${(Array.isArray(values)?values:[]).map(v=>{const name=typeof v==="object"?v.name:v,price=typeof v==="object"?Number(v.price||0):0;return `<option value="${escapeAttr(name)}">${escapeHtml(name)}${price?` (+฿${price.toFixed(2)})`:""}</option>`}).join("")}</select></label>`).join("");openModal(`<h2>${escapeHtml(menu.name)}</h2>${fields}<label>หมายเหตุเพิ่มเติม<span style="display:block"></span><textarea id="pos-note" rows="3" style="display:block;width:100%;margin-top:7px"></textarea></label><div class="actions"><button class="primary" onclick="App.posAddConfigured('${menuId}')">เพิ่มรายการ</button><button class="secondary" onclick="App.closeModal()">ยกเลิก</button></div>`)}
@@ -561,5 +610,5 @@ const App = (() => {
   function escapeAttr(v){return escapeHtml(v)}
 
   restore();
-  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,closeModal,quickOrder};
+  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,closeModal,quickOrder};
 })();
