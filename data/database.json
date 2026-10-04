@@ -17,6 +17,15 @@
       "member_points": 0,
       "active": true,
       "password_hash": "pbkdf2_sha256$120000$92f72e3560b5458be82215aa8d5d9b57$c845259beefbc1108f06b1aa5f25e6cf6021a21f70db2ffa1042b44e315e220b"
+    },
+    "local_a55c18888d8448d0": {
+      "id": "local_a55c18888d8448d0",
+      "email": "tester@gmail.com",
+      "name": "tester",
+      "role": "customer",
+      "member_points": 0,
+      "active": true,
+      "password_hash": "pbkdf2_sha256$120000$a62a2e7d7d3d899bb7951bb466fdc485$f75b4765c993e0a4fa0120bacdadfda70207ec2e6a12b192a060a028fcbc7819"
     }
   },
   "menus": {
