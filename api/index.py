@@ -251,14 +251,16 @@ def leave_customer_tables(uid):
                 post("audit_logs", {"id": new_id("log"), "user_id": uid, "action": "CANCEL_BILL_ON_LOGOUT", "target_type": "order", "target_id": order.get("id"), "detail": "ยกเลิกบิลของ Customer ที่ Logout", "timestamp": now_iso()})
         if remaining:
             new_owner = remaining[0] if str(table.get("claimed_by")) == uid else table.get("claimed_by")
-            patch(f"tables/{table_id}", {"occupant_ids": remaining, "claimed_by": new_owner})
+            seen = table.get("member_last_seen") if isinstance(table.get("member_last_seen"), dict) else {}
+            seen.pop(uid, None)
+            patch(f"tables/{table_id}", {"occupant_ids": remaining, "claimed_by": new_owner, "member_last_seen": seen})
             changed.append({"table_id": table_id, "new_owner": new_owner, "remaining": remaining})
         else:
             for order in active:
                 fresh = find_by_id("orders", order.get("id")) or order
                 if fresh.get("status") not in {"closed", "merged", "cancelled"}:
                     patch(f"orders/{order.get('id')}", {"status": "cancelled", "cancelled_at": now_iso(), "cancelled_reason": "ไม่มี Customer เหลือในโต๊ะ"})
-            patch(f"tables/{table_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "party_size": None, "split_requested": False})
+            patch(f"tables/{table_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "member_last_seen": {}, "party_size": None, "split_requested": False})
             post("audit_logs", {"id": new_id("log"), "user_id": uid, "action": "CANCEL_EMPTY_TABLE_BILLS", "target_type": "table", "target_id": table_id, "detail": "ยกเลิกบิลทั้งหมดเพราะไม่มี Customer เหลือ", "timestamp": now_iso()})
             changed.append({"table_id": table_id, "new_owner": None, "remaining": []})
     return changed
@@ -271,6 +273,24 @@ def repair_stale_tables():
         if not isinstance(table, dict) or table.get("status") not in {"occupied", "waiting_bill"}:
             continue
         members = table_members(table)
+        presence = table.get("member_last_seen") if isinstance(table.get("member_last_seen"), dict) else {}
+        stale_members = []
+        for member in members:
+            seen = presence.get(member)
+            try:
+                seen_at = datetime.fromisoformat(str(seen).replace("Z", "+00:00")) if seen else None
+                if seen_at and datetime.now(timezone.utc) - seen_at > timedelta(seconds=90):
+                    stale_members.append(member)
+            except (TypeError, ValueError):
+                continue
+        if stale_members:
+            remaining = [member for member in members if member not in stale_members]
+            remaining_presence = {k: v for k, v in presence.items() if k in remaining}
+            owner = table.get("claimed_by")
+            if str(owner) in stale_members:
+                owner = remaining[0] if remaining else None
+            patch(f"tables/{table.get('id')}", {"occupant_ids": remaining, "member_last_seen": remaining_presence, "claimed_by": owner})
+            members = remaining
         active = [o for o in (orders.values() if isinstance(orders, dict) else []) if o.get("table_id") == table.get("id") and o.get("status") not in {"closed", "merged", "cancelled"}]
         # A customer can select a table before placing the first order. Keep
         # that shared table occupied so other clients see the same members.
@@ -844,6 +864,16 @@ class handler(BaseHTTPRequestHandler):
                 changes = leave_customer_tables(profile.get("id"))
                 audit(profile, "LEAVE_TABLE", "table", changes[0]["table_id"] if changes else "", "logout/session expired")
                 return response(self, 200, {"ok": True, "changes": changes})
+            if path == "/api/customer/presence":
+                require_role(profile, "customer")
+                table_id = clean_text(data.get("table_id"), "โต๊ะ", 50)
+                table = find_by_id("tables", table_id)
+                if not table or not table_has_member(table, profile.get("id")):
+                    raise ValueError("คุณไม่ได้เป็นสมาชิกของโต๊ะนี้")
+                seen = table.get("member_last_seen") if isinstance(table.get("member_last_seen"), dict) else {}
+                seen[str(profile.get("id"))] = now_iso()
+                patch(f"tables/{table_id}", {"member_last_seen": seen, "status": "occupied" if table.get("status") == "available" else table.get("status")})
+                return response(self, 200, {"ok": True})
             if path == "/api/customer/tables/release":
                 require_role(profile, "customer")
                 table_id = clean_text(data.get("table_id"), "โต๊ะ", 50)

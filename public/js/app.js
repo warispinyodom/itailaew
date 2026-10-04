@@ -1,5 +1,5 @@
 const App = (() => {
-  const state = { user: null, token: localStorage.getItem("itailaew_token"), refreshToken: localStorage.getItem("itailaew_refresh_token"), authMode: "login", menuPage: 1, polling: null, selectedTable: null, pendingTable: null, cart: {}, hasActiveOrder: false, hadActiveOrder: false, submittingCart: false };
+  const state = { user: null, token: localStorage.getItem("itailaew_token"), refreshToken: localStorage.getItem("itailaew_refresh_token"), authMode: "login", menuPage: 1, polling: null, presenceTimer: null, tableVerified: false, selectedTable: null, pendingTable: null, cart: {}, hasActiveOrder: false, hadActiveOrder: false, submittingCart: false };
   const $ = id => document.getElementById(id);
 
   async function api(path, options = {}) {
@@ -102,11 +102,11 @@ const App = (() => {
   }
 
   async function logout() {
-    if (state.user?.role === "customer" && state.selectedTable && state.token) {
+    if (state.user?.role === "customer" && state.token) {
       try { await api("/api/customer/leave", {method:"POST", body:JSON.stringify({reason:"logout"})}); } catch (_) { }
     }
     if (state.polling) { clearInterval(state.polling); state.polling = null; }
-    state.user = null; state.token = null; state.refreshToken = null; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); localStorage.removeItem("itailaew_refresh_token"); localStorage.removeItem("itailaew_current_page"); state.selectedTable=null; state.cart={};
+    stopPresence(); state.user = null; state.token = null; state.refreshToken = null; state.tableVerified=false; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); localStorage.removeItem("itailaew_refresh_token"); localStorage.removeItem("itailaew_current_page"); state.selectedTable=null; state.cart={};
     refreshNav();
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     $("login")?.classList.add("active");
@@ -141,6 +141,7 @@ const App = (() => {
       }
       state.user = data.user;
       loadUserStorage();
+      state.tableVerified = false;
       validateSelectedTableForUser();
       if (state.user.role === "customer" && state.selectedTable) {
         try {
@@ -152,8 +153,9 @@ const App = (() => {
             if (moved) { state.selectedTable = moved; localStorage.setItem(tableKey(), JSON.stringify(moved)); }
           }
           const live = tables.tables.find(t => t.id === state.selectedTable?.id);
-          if (!live || live.status === "available" || !tableHasCurrentUser(live)) clearCustomerSessionData();
-        } catch (_) { }
+          if (!live || !tableHasCurrentUser(live)) clearCustomerSessionData();
+          else { state.selectedTable = live; state.tableVerified = true; startPresence(); }
+        } catch (_) { state.selectedTable=null; state.tableVerified=false; }
       }
       // A refresh must recover the table from Firebase, not only from a stale
       // localStorage snapshot. This also lets a full table recognize its
@@ -164,11 +166,13 @@ const App = (() => {
           const mine = tables.tables.find(t => tableHasCurrentUser(t));
           if (mine) {
             state.selectedTable = mine;
+            state.tableVerified = true;
             localStorage.setItem(tableKey(), JSON.stringify(mine));
+            startPresence();
           }
         } catch (_) { }
       }
-      if (state.user.role === "customer" && state.selectedTable) {
+      if (state.user.role === "customer" && state.tableVerified && state.selectedTable) {
         // Rehydrate active-order state before refreshNav; otherwise the Bill
         // button disappears after a hard refresh even though the order exists.
         try { await loadCustomer(); } catch (_) { }
@@ -223,18 +227,26 @@ const App = (() => {
   function userKey(){ return state.user?.id ? String(state.user.id).replace(/[^a-zA-Z0-9_-]/g,"_") : "anonymous"; }
   function cartKey(){ return `itailaew_cart_${userKey()}`; }
   function tableKey(){ return `itailaew_selected_table_${userKey()}`; }
-  function loadUserStorage(){ if(!state.user)return; try{state.cart=JSON.parse(localStorage.getItem(cartKey())||"{}");}catch(_){state.cart={};} try{state.selectedTable=JSON.parse(localStorage.getItem(tableKey())||"null");}catch(_){state.selectedTable=null;} }
+  function loadUserStorage(){ if(!state.user)return; try{state.cart=JSON.parse(localStorage.getItem(cartKey())||"{}");}catch(_){state.cart={};} try{state.selectedTable=JSON.parse(localStorage.getItem(tableKey())||"null");}catch(_){state.selectedTable=null;} state.tableVerified=false; }
   function persistCart(){ if(state.user) localStorage.setItem(cartKey(), JSON.stringify(state.cart||{})); }
-  function selectedTable(){ return state.selectedTable; }
+  function selectedTable(){ return state.tableVerified ? state.selectedTable : null; }
+  function stopPresence(){ if(state.presenceTimer){clearInterval(state.presenceTimer);state.presenceTimer=null;} }
+  function startPresence(){
+    stopPresence();
+    if(state.user?.role!=="customer" || !state.tableVerified || !state.selectedTable) return;
+    const beat=()=>api("/api/customer/presence",{method:"POST",body:JSON.stringify({table_id:state.selectedTable.id})}).catch(()=>{});
+    beat(); state.presenceTimer=setInterval(beat,20000);
+  }
   async function syncLiveCustomerTable(){
     if(state.user?.role!=="customer") return null;
     const d=await api("/api/customer/tables");
     const mine=d.tables.find(t=>tableHasCurrentUser(t));
-    if(mine){state.selectedTable=mine;localStorage.setItem(tableKey(),JSON.stringify(mine));refreshNav();}
+    if(mine){state.selectedTable=mine;state.tableVerified=true;localStorage.setItem(tableKey(),JSON.stringify(mine));startPresence();refreshNav();}
+    else {state.selectedTable=null;state.tableVerified=false;localStorage.removeItem(tableKey());stopPresence();refreshNav();}
     return mine||null;
   }
-  function clearSelectedTable(){ state.selectedTable=null; if(state.user)localStorage.removeItem(tableKey()); refreshNav(); }
-  function clearCustomerSessionData(){ state.cart={}; state.selectedTable=null; state.hadActiveOrder=false; if(state.user){localStorage.removeItem(cartKey());localStorage.removeItem(tableKey());} refreshNav(); }
+  function clearSelectedTable(){ state.selectedTable=null; state.tableVerified=false; stopPresence(); if(state.user)localStorage.removeItem(tableKey()); refreshNav(); }
+  function clearCustomerSessionData(){ state.cart={}; state.selectedTable=null; state.tableVerified=false; state.hadActiveOrder=false; stopPresence(); if(state.user){localStorage.removeItem(cartKey());localStorage.removeItem(tableKey());} refreshNav(); }
   function tableHasCurrentUser(table){ return !!(table && state.user && ((Array.isArray(table.occupant_ids) && table.occupant_ids.includes(state.user.id)) || table.claimed_by === state.user.id)); }
   function validateSelectedTableForUser(){ if(state.user?.role === "customer" && state.selectedTable && !tableHasCurrentUser(state.selectedTable)) clearSelectedTable(); }
   async function quickOrder(menuId){
@@ -269,9 +281,9 @@ const App = (() => {
     try{
       if(selectedTable() && selectedTable().id!==id){
         await api("/api/customer/leave",{method:"POST",body:JSON.stringify({reason:"change_table"})});
-        state.selectedTable=null;state.cart={};localStorage.removeItem(tableKey());localStorage.removeItem(cartKey());state.hasActiveOrder=false;state.hadActiveOrder=false;
+        state.selectedTable=null;state.tableVerified=false;stopPresence();state.cart={};localStorage.removeItem(tableKey());localStorage.removeItem(cartKey());state.hasActiveOrder=false;state.hadActiveOrder=false;
       }
-      const d=await api("/api/customer/tables/claim",{method:"POST",body:JSON.stringify({table_id:id})});if(d.joined){state.selectedTable={...d.table,party_size:Number(d.table.party_size||0)};localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));refreshNav();toast(`เข้าร่วมโต๊ะ ${d.table.table_number} แล้ว`);go("menu");return;}state.pendingTable=d.table;openModal(`<h2>ระบุจำนวนคนทั้งหมดในกลุ่ม</h2><p class="small">โต๊ะ ${escapeHtml(d.table.table_number)} รองรับสูงสุด ${Number(d.table.capacity||4)} คน</p><form onsubmit="App.confirmPartySize(event)"><label>จำนวนคนทั้งหมดในกลุ่ม<input id="party-size" type="number" min="1" max="${Number(d.table.capacity||4)}" required></label><div class="actions"><button class="primary">ยืนยันจำนวนคน</button><button type="button" class="secondary" onclick="App.cancelPartySize()">ยกเลิก</button></div></form>`)}
+      const d=await api("/api/customer/tables/claim",{method:"POST",body:JSON.stringify({table_id:id})});if(d.joined){state.selectedTable={...d.table,party_size:Number(d.table.party_size||0)};state.tableVerified=true;localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));startPresence();refreshNav();toast(`เข้าร่วมโต๊ะ ${d.table.table_number} แล้ว`);go("menu");return;}state.pendingTable=d.table;openModal(`<h2>ระบุจำนวนคนทั้งหมดในกลุ่ม</h2><p class="small">โต๊ะ ${escapeHtml(d.table.table_number)} รองรับสูงสุด ${Number(d.table.capacity||4)} คน</p><form onsubmit="App.confirmPartySize(event)"><label>จำนวนคนทั้งหมดในกลุ่ม<input id="party-size" type="number" min="1" max="${Number(d.table.capacity||4)}" required></label><div class="actions"><button class="primary">ยืนยันจำนวนคน</button><button type="button" class="secondary" onclick="App.cancelPartySize()">ยกเลิก</button></div></form>`)}
     catch(e){toast(e.message)}
   }
   async function cancelPartySize(){
@@ -281,7 +293,7 @@ const App = (() => {
   async function confirmPartySize(event){
     event.preventDefault(); const table=state.pendingTable; const partySize=Number($("party-size")?.value||0);
     if(!table)return; if(!Number.isInteger(partySize)||partySize<1||partySize>Number(table.capacity||4))return toast(`จำนวนคนต้องอยู่ระหว่าง 1-${Number(table.capacity||4)} คน`);
-    try{const d=await api("/api/customer/tables/confirm",{method:"POST",body:JSON.stringify({table_id:table.id,party_size:partySize})});state.pendingTable=null;state.selectedTable=d.table;localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));closeModal();refreshNav();toast(`เลือกโต๊ะ ${d.table.table_number} สำหรับ ${partySize} คนแล้ว`);go("menu")}catch(e){toast(e.message)}
+    try{const d=await api("/api/customer/tables/confirm",{method:"POST",body:JSON.stringify({table_id:table.id,party_size:partySize})});state.pendingTable=null;state.selectedTable=d.table;state.tableVerified=true;localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));startPresence();closeModal();refreshNav();toast(`เลือกโต๊ะ ${d.table.table_number} สำหรับ ${partySize} คนแล้ว`);go("menu")}catch(e){toast(e.message)}
   }
   function reservationMinimumValue(){ const d=new Date(Date.now()+30*60*1000); const pad=n=>String(n).padStart(2,"0"); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
   function setReservationMinimum(){ const input=$("res-date"); if(input){input.min=reservationMinimumValue(); input.title="ต้องจองล่วงหน้าอย่างน้อย 30 นาที";} }
