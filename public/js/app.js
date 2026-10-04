@@ -1,5 +1,5 @@
 const App = (() => {
-  const state = { user: null, token: localStorage.getItem("itailaew_token"), authMode: "login", menuPage: 1, polling: null, selectedTable: null, pendingTable: null, cart: {}, menus: [], hasActiveOrder: false, hadActiveOrder: false };
+  const state = { user: null, token: localStorage.getItem("itailaew_token"), refreshToken: localStorage.getItem("itailaew_refresh_token"), authMode: "login", menuPage: 1, polling: null, selectedTable: null, pendingTable: null, cart: {}, hasActiveOrder: false, hadActiveOrder: false, submittingCart: false };
   const $ = id => document.getElementById(id);
 
   async function api(path, options = {}) {
@@ -67,7 +67,7 @@ const App = (() => {
       const body = {email:$("auth-email").value, password:$("auth-password").value};
       if (mode === "register") body.name = $("auth-name").value;
       const data = await api(`/api/auth/${mode === "login" ? "login" : "register"}`, {method:"POST",body:JSON.stringify(body)});
-      state.token = data.token; state.user = data.user; localStorage.setItem("itailaew_token", state.token); loadUserStorage(); validateSelectedTableForUser();
+      state.token = data.token; state.refreshToken = data.refresh_token || state.refreshToken; state.user = data.user; localStorage.setItem("itailaew_token", state.token); if(state.refreshToken)localStorage.setItem("itailaew_refresh_token", state.refreshToken); loadUserStorage(); validateSelectedTableForUser();
       refreshNav(); toast(data.message);
       if (state.user.role === "admin") go("admin"); else if (state.user.role === "staff") go("staff"); else go("home");
     } catch(e) { toast(e.message); }
@@ -106,7 +106,7 @@ const App = (() => {
       try { await api("/api/customer/leave", {method:"POST", body:JSON.stringify({reason:"logout"})}); } catch (_) { }
     }
     if (state.polling) { clearInterval(state.polling); state.polling = null; }
-    state.user = null; state.token = null; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); localStorage.removeItem("itailaew_current_page"); state.selectedTable=null; state.cart={};
+    state.user = null; state.token = null; state.refreshToken = null; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); localStorage.removeItem("itailaew_refresh_token"); localStorage.removeItem("itailaew_current_page"); state.selectedTable=null; state.cart={};
     refreshNav();
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     $("login")?.classList.add("active");
@@ -127,7 +127,18 @@ const App = (() => {
       return;
     }
     try {
-      const data = await api("/api/me");
+      let data;
+      try {
+        data = await api("/api/me");
+      } catch (firstError) {
+        if (!state.refreshToken) throw firstError;
+        const renewed = await api("/api/auth/refresh", {method:"POST", body:JSON.stringify({refresh_token:state.refreshToken})});
+        state.token = renewed.token;
+        state.refreshToken = renewed.refresh_token || state.refreshToken;
+        localStorage.setItem("itailaew_token", state.token);
+        localStorage.setItem("itailaew_refresh_token", state.refreshToken);
+        data = {user: renewed.user};
+      }
       state.user = data.user;
       loadUserStorage();
       validateSelectedTableForUser();
@@ -246,14 +257,21 @@ const App = (() => {
   function cartAdd(key,delta){if(!state.cart[key])return;state.cart[key].quantity+=delta;if(state.cart[key].quantity<=0)delete state.cart[key];persistCart();renderCart()}
   function clearCart(){state.cart={};persistCart();renderCart()}
   async function submitCart(){
+    if(state.submittingCart)return;
+    state.submittingCart=true;
     try{const live=await syncLiveCustomerTable();if(!live)return toast("ไม่พบโต๊ะที่คุณเข้าร่วม กรุณาเลือกโต๊ะใหม่"); const items=Object.values(state.cart).map(x=>({menu_id:x.menu_id,quantity:x.quantity,options:x.options||{}})); if(!items.length)return toast("กรุณาเพิ่มอาหารลงตะกร้า");
-    await api("/api/customer/orders",{method:"POST",body:JSON.stringify({table_id:live.id,party_size:live.party_size,items})});clearCart();toast("ส่งออเดอร์เข้าครัวแล้ว");go("customer")}catch(e){toast(e.message)}
+    await api("/api/customer/orders",{method:"POST",body:JSON.stringify({table_id:live.id,party_size:live.party_size,items,client_request_id:`${state.user.id}_${Date.now()}_${Math.random().toString(36).slice(2)}`})});clearCart();toast("ส่งออเดอร์เข้าครัวแล้ว");go("customer")}catch(e){toast(e.message)}finally{state.submittingCart=false}
   }
   async function loadCustomerTables(){
     try{const d=await api("/api/customer/tables");$("customer-tables").innerHTML=d.tables.map(t=>{const capacity=Number(t.capacity||4);const members=Number(t.occupant_count||0);const joinable=!!t.joinable;const available=t.status==="available";const disabled=!available&&!joinable;const info=available?"โต๊ะว่างพร้อมให้เลือก":joinable?`มีลูกค้าแล้ว ${members}/${Number(t.party_size)} คน · เหลือ ${Number(t.remaining_people)} ที่`:`โต๊ะเต็มแล้ว (${members}/${Number(t.party_size||capacity)} คน)`;return `<div class="table-card"><div class="top"><h3>โต๊ะ ${escapeHtml(t.table_number)}</h3><span class="badge ${escapeHtml(t.status)}">${escapeHtml(t.status)}</span></div><div class="info">${info}<br>ความจุสูงสุด ${capacity} คน</div><button class="primary full" ${disabled?"disabled":""} onclick="App.claimTable('${t.id}')">${available?"เลือกโต๊ะนี้":joinable?"เข้าร่วมโต๊ะ":"โต๊ะเต็ม"}</button></div>`}).join("")}catch(e){toast(e.message)}
   }
   async function claimTable(id){
-    try{const d=await api("/api/customer/tables/claim",{method:"POST",body:JSON.stringify({table_id:id})});if(d.joined){state.selectedTable={...d.table,party_size:Number(d.table.party_size||0)};localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));refreshNav();toast(`เข้าร่วมโต๊ะ ${d.table.table_number} แล้ว`);go("menu");return;}state.pendingTable=d.table;openModal(`<h2>ระบุจำนวนคนทั้งหมดในกลุ่ม</h2><p class="small">โต๊ะ ${escapeHtml(d.table.table_number)} รองรับสูงสุด ${Number(d.table.capacity||4)} คน</p><form onsubmit="App.confirmPartySize(event)"><label>จำนวนคนที่จะเข้า<input id="party-size" type="number" min="1" max="${Number(d.table.capacity||4)}" required></label><div class="actions"><button class="primary">ยืนยันจำนวนคน</button><button type="button" class="secondary" onclick="App.cancelPartySize()">ยกเลิก</button></div></form>`)}
+    try{
+      if(selectedTable() && selectedTable().id!==id){
+        await api("/api/customer/leave",{method:"POST",body:JSON.stringify({reason:"change_table"})});
+        state.selectedTable=null;state.cart={};localStorage.removeItem(tableKey());localStorage.removeItem(cartKey());state.hasActiveOrder=false;state.hadActiveOrder=false;
+      }
+      const d=await api("/api/customer/tables/claim",{method:"POST",body:JSON.stringify({table_id:id})});if(d.joined){state.selectedTable={...d.table,party_size:Number(d.table.party_size||0)};localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));refreshNav();toast(`เข้าร่วมโต๊ะ ${d.table.table_number} แล้ว`);go("menu");return;}state.pendingTable=d.table;openModal(`<h2>ระบุจำนวนคนทั้งหมดในกลุ่ม</h2><p class="small">โต๊ะ ${escapeHtml(d.table.table_number)} รองรับสูงสุด ${Number(d.table.capacity||4)} คน</p><form onsubmit="App.confirmPartySize(event)"><label>จำนวนคนทั้งหมดในกลุ่ม<input id="party-size" type="number" min="1" max="${Number(d.table.capacity||4)}" required></label><div class="actions"><button class="primary">ยืนยันจำนวนคน</button><button type="button" class="secondary" onclick="App.cancelPartySize()">ยกเลิก</button></div></form>`)}
     catch(e){toast(e.message)}
   }
   async function cancelPartySize(){

@@ -132,6 +132,22 @@ def firebase_signin(email, password):
     return _auth_request("signInWithPassword", {"email": email, "password": password, "returnSecureToken": True})
 
 
+def firebase_refresh(refresh_token):
+    if not refresh_token:
+        raise AuthError("ไม่พบ Refresh Token")
+    if is_local_mode():
+        uid = _verify_local_token(refresh_token)
+        return {"localId": uid, "id_token": _local_token(uid), "refresh_token": refresh_token}
+    try:
+        url = f"https://securetoken.googleapis.com/v1/token?key={urllib.parse.quote(FIREBASE_API_KEY)}"
+        body = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+        with urllib.request.urlopen(req, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError:
+        raise AuthError("Refresh Token ไม่ถูกต้อง กรุณา Login ใหม่")
+
+
 def verify_id_token(id_token):
     if not id_token:
         raise AuthError("ไม่พบ Token")

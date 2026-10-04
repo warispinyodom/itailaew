@@ -18,7 +18,7 @@ try:
     )
     from .firebase import get, put, patch, post, delete, transaction, FirebaseError
     from .auth import (
-        firebase_signup, firebase_signin, verify_id_token, require_user, require_role,
+        firebase_signup, firebase_signin, firebase_refresh, verify_id_token, require_user, require_role,
         safe_email, validate_password, create_profile, get_profile, list_users,
         update_user_role, set_user_active, AuthError
     )
@@ -35,7 +35,7 @@ except ImportError:
     )
     from firebase import get, put, patch, post, delete, transaction, FirebaseError
     from auth import (
-        firebase_signup, firebase_signin, verify_id_token, require_user, require_role,
+        firebase_signup, firebase_signin, firebase_refresh, verify_id_token, require_user, require_role,
         safe_email, validate_password, create_profile, get_profile, list_users,
         update_user_role, set_user_active, AuthError
     )
@@ -640,7 +640,7 @@ class handler(BaseHTTPRequestHandler):
 
                 auth = firebase_signup(email, password)
                 profile = create_profile(auth["localId"], email, name, "customer", password=password)
-                return response(self, 201, {"ok": True, "message": "สมัครสมาชิกสำเร็จ", "token": auth["idToken"], "user": profile})
+                return response(self, 201, {"ok": True, "message": "สมัครสมาชิกสำเร็จ", "token": auth["idToken"], "refresh_token": auth.get("refreshToken") or auth.get("idToken"), "user": profile})
 
             if path == "/api/auth/login":
                 email = str(data.get("email", "")).strip().lower()
@@ -649,7 +649,13 @@ class handler(BaseHTTPRequestHandler):
                     raise ValueError("กรุณากรอกอีเมลและรหัสผ่าน")
                 auth = firebase_signin(email, password)
                 profile = get_profile(auth["localId"])
-                return response(self, 200, {"ok": True, "message": "เข้าสู่ระบบสำเร็จ", "token": auth["idToken"], "user": profile})
+                return response(self, 200, {"ok": True, "message": "เข้าสู่ระบบสำเร็จ", "token": auth["idToken"], "refresh_token": auth.get("refreshToken") or auth.get("idToken"), "user": profile})
+
+            if path == "/api/auth/refresh":
+                refreshed = firebase_refresh(data.get("refresh_token"))
+                uid = refreshed.get("user_id") or refreshed.get("localId")
+                profile = get_profile(uid)
+                return response(self, 200, {"ok": True, "token": refreshed.get("id_token") or refreshed.get("idToken"), "refresh_token": refreshed.get("refresh_token") or data.get("refresh_token"), "user": profile})
 
             if path == "/api/bootstrap":
                 if not BOOTSTRAP_SECRET or data.get("secret") != BOOTSTRAP_SECRET:
@@ -921,6 +927,12 @@ class handler(BaseHTTPRequestHandler):
                     raise ValueError("คุณยังไม่ได้เข้าร่วมโต๊ะนี้")
                 if table.get("status") == "reserved":
                     raise ValueError("โต๊ะนี้ถูกจองไว้")
+                client_request_id = str(data.get("client_request_id") or "").strip()[:120]
+                if client_request_id:
+                    all_orders = get("orders") or {}
+                    duplicate = next((o for o in (all_orders.values() if isinstance(all_orders, dict) else []) if o.get("table_id") == table_id and o.get("client_request_id") == client_request_id), None)
+                    if duplicate:
+                        return response(self, 200, {"ok": True, "duplicate": True, "order": duplicate})
                 capacity = int(table.get("capacity", 4) or 4)
                 party_size = to_positive_int(data.get("party_size") or table.get("party_size"), "จำนวนคน")
                 if party_size > capacity:
@@ -933,7 +945,7 @@ class handler(BaseHTTPRequestHandler):
                     order_id = existing["id"]
                     all_items = existing.get("items", []) + final_items
                     bill = calculate_bill(all_items, existing.get("discount", 0))
-                    patch(f"orders/{order_id}", {"items": all_items, "party_size": table.get("party_size") or party_size, **bill})
+                    patch(f"orders/{order_id}", {"items": all_items, "party_size": table.get("party_size") or party_size, "client_request_id": client_request_id, **bill})
                     round_id = existing.get("round_id") or existing.get("id")
                     if not existing.get("round_id"):
                         patch(f"orders/{order_id}", {"round_id": round_id})
@@ -944,7 +956,7 @@ class handler(BaseHTTPRequestHandler):
                     bill = calculate_bill(final_items, 0)
                     order = {"id": order_id, "table_id": table_id, "table_number": table.get("table_number"),
                              "customer_id": profile["id"], "party_size": party_size, "items": final_items, **bill, "status": "open",
-                             "created_by": profile["id"], "created_at": now_iso(), "source": "qr", "round_id": order_id}
+                             "created_by": profile["id"], "created_at": now_iso(), "source": "qr", "round_id": order_id, "client_request_id": client_request_id}
                     put(f"orders/{order_id}", order)
                     patch(f"tables/{table_id}", {"status": "occupied", "claimed_by": table.get("claimed_by") or profile["id"], "party_size": table.get("party_size") or party_size, "current_order_id": order_id, "current_round_id": order_id})
                 for item in final_items:
