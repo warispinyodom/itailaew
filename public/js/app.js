@@ -45,10 +45,10 @@ const App = (() => {
     if (id === "menu") loadMenus();
     if (id === "cart") { renderCart(); }
     if (id === "reservation") { setReservationMinimum(); loadReservations(); }
-    if (id === "customer") { loadCustomer(); state.polling = setInterval(loadCustomer, 8000); }
+    if (id === "customer") { loadCustomer(); state.polling = setInterval(loadCustomer, 30000); }
     if (id === "admin") loadDashboard();
-    if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 8000); }
-    if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 8000); }
+    if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 30000); }
+    if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 30000); }
     if (id === "pos") loadPos();
     window.scrollTo({top:0,behavior:"smooth"});
   }
@@ -172,11 +172,6 @@ const App = (() => {
           }
         } catch (_) { }
       }
-      if (state.user.role === "customer" && state.tableVerified && state.selectedTable) {
-        // Rehydrate active-order state before refreshNav; otherwise the Bill
-        // button disappears after a hard refresh even though the order exists.
-        try { await loadCustomer(); } catch (_) { }
-      }
       refreshNav();
       const savedPage = localStorage.getItem("itailaew_current_page");
       const allowed = ["home","menu","reservation","customer","table-select","cart","admin","staff","tables","pos"];
@@ -188,13 +183,13 @@ const App = (() => {
       $(target)?.classList.add("active");
       localStorage.setItem("itailaew_current_page", target);
       if (target === "admin") loadDashboard();
-      if (target === "staff") { loadStaff(); if (!state.polling) state.polling = setInterval(loadStaff, 8000); }
+      if (target === "staff") { loadStaff(); if (!state.polling) state.polling = setInterval(loadStaff, 30000); }
       if (target === "table-select") loadCustomerTables();
       if (target === "menu") loadMenus();
       if (target === "reservation") { setReservationMinimum(); loadReservations(); }
-      if (target === "customer") { loadCustomer(); if (!state.polling) state.polling = setInterval(loadCustomer, 8000); }
+      if (target === "customer") { loadCustomer(); if (!state.polling) state.polling = setInterval(loadCustomer, 30000); }
       if (target === "cart") renderCart();
-      if (target === "tables") { loadTables(); if (!state.polling) state.polling = setInterval(loadTables, 8000); }
+      if (target === "tables") { loadTables(); if (!state.polling) state.polling = setInterval(loadTables, 30000); }
       if (target === "pos") loadPos();
     } catch (_) {
       // Do not destroy a valid local identity because a secondary page/data
@@ -464,10 +459,14 @@ const App = (() => {
 
   async function showCheckout(orderId) {
     try {
-      const d = await api(`/api/orders/${orderId}/bill?discount=0`);
+      const [d,paymentData] = await Promise.all([api(`/api/orders/${orderId}/bill?discount=0`),api("/api/payment-settings")]);
       const o = d.order;
+      const ps=paymentData.settings||{};
+      const paymentOptions=[ps.cash_enabled?`<option value="cash">เงินสด</option>`:"",ps.bank_enabled?`<option value="bank">โอนผ่านบัญชีธนาคาร${ps.bank_name?` · ${escapeHtml(ps.bank_name)}`:""}</option>`:"",ps.qr_enabled?`<option value="qr">QR</option>`:""].join("");
+      const paymentInfo=(ps.bank_name||ps.account_name||ps.account_number||ps.qr_image_url)?`<div class="small" style="margin-top:8px">${ps.bank_name?`ธนาคาร: ${escapeHtml(ps.bank_name)}<br>`:""}${ps.account_name?`ชื่อบัญชี: ${escapeHtml(ps.account_name)}<br>`:""}${ps.account_number?`เลขบัญชี: ${escapeHtml(ps.account_number)}<br>`:""}${ps.qr_image_url?`<img src="${escapeAttr(ps.qr_image_url)}" alt="QR Code" style="max-width:180px;max-height:180px;margin-top:8px;object-fit:contain">`:""}</div>`:"";
       const rows = (o.items || []).map(it => `<div class="table-row" style="padding:7px 0"><span>${escapeHtml(it.name)} × ${it.quantity}</span><span>฿${(Number(it.unit_price) * Number(it.quantity)).toFixed(2)}</span></div>`).join("");
-      openModal(`<h2>เช็คบิล โต๊ะ ${escapeHtml(o.table_number || "-")}</h2>${rows}<label>ส่วนลด (บาท)<input id="co-discount" type="number" min="0" step="0.01" value="0" oninput="App.previewBill('${orderId}')"></label><div id="co-summary">${billRows(d.bill)}</div><div class="actions"><button class="primary" onclick="App.doCheckout('${orderId}')">ยืนยันเช็คบิล</button><button type="button" class="secondary" onclick="App.closeModal()">Cancel</button></div>`);
+      if(!paymentOptions) throw new Error("Admin ยังไม่ได้เปิดวิธีชำระเงิน");
+      openModal(`<h2>เช็คบิล โต๊ะ ${escapeHtml(o.table_number || "-")}</h2>${rows}<label>ส่วนลด (บาท)<input id="co-discount" type="number" min="0" step="0.01" value="0" oninput="App.previewBill('${orderId}')"></label><label>วิธีชำระเงิน<select id="co-payment-method">${paymentOptions}</select>${paymentInfo}</label><div id="co-summary">${billRows(d.bill)}</div><div class="actions"><button class="primary" onclick="App.doCheckout('${orderId}')">ยืนยันเช็คบิล</button><button type="button" class="secondary" onclick="App.closeModal()">Cancel</button></div>`);
     } catch(e) { toast(e.message); }
   }
 
@@ -483,7 +482,7 @@ const App = (() => {
 
   async function doCheckout(orderId) {
     try {
-      const d = await api(`/api/orders/${orderId}/checkout`, {method: "PATCH", body: JSON.stringify({discount: $("co-discount").value || 0})});
+      const d = await api(`/api/orders/${orderId}/checkout`, {method: "PATCH", body: JSON.stringify({discount: $("co-discount").value || 0, payment_method: $("co-payment-method")?.value || "cash"})});
       toast("เช็คบิลสำเร็จ");
       showReceipt(d.order);
       if ($("tables").classList.contains("active")) loadTables(); else loadStaff();
@@ -493,7 +492,8 @@ const App = (() => {
   function showReceipt(o) {
     const rows = (o.items || []).map(it => `<div class="table-row" style="padding:5px 0;border:0"><span>${escapeHtml(it.name)} × ${it.quantity}</span><span>฿${(Number(it.unit_price) * Number(it.quantity)).toFixed(2)}</span></div>`).join("");
     const when = o.closed_at ? new Date(o.closed_at).toLocaleString("th-TH") : "";
-    openModal(`<div class="receipt"><h2 style="text-align:center;margin-bottom:0">itailaew</h2><div class="small" style="text-align:center">Italian Restaurant & Café</div><div class="small" style="text-align:center;margin:8px 0 14px">ใบเสร็จรับเงิน · โต๊ะ ${escapeHtml(o.table_number || "-")} · ${escapeHtml(when)}</div>${rows}<hr style="border:0;border-top:1px dashed var(--line)">${billRows(o)}<div class="small" style="text-align:center;margin-top:12px">ได้รับแต้ม ${Number(o.earned_points || 0)} แต้ม · แต้มที่ใช้ ${Number(o.points_used || 0)} แต้ม<br>ขอบคุณที่ใช้บริการ</div></div><div class="actions no-print"><button class="primary" onclick="window.print()">พิมพ์ใบเสร็จ</button><button class="secondary" onclick="App.closeModal()">ปิด</button></div>`);
+    const paymentLabels={cash:"เงินสด",bank:"โอนผ่านบัญชีธนาคาร",qr:"QR"};
+    openModal(`<div class="receipt"><h2 style="text-align:center;margin-bottom:0">itailaew</h2><div class="small" style="text-align:center">Italian Restaurant & Café</div><div class="small" style="text-align:center;margin:8px 0 14px">ใบเสร็จรับเงิน · โต๊ะ ${escapeHtml(o.table_number || "-")} · ${escapeHtml(when)}</div>${rows}<hr style="border:0;border-top:1px dashed var(--line)">${billRows(o)}<div class="small" style="text-align:center;margin-top:12px">วิธีชำระเงิน: ${escapeHtml(paymentLabels[o.payment_method]||o.payment_method||"-")}<br>ได้รับแต้ม ${Number(o.earned_points || 0)} แต้ม · แต้มที่ใช้ ${Number(o.points_used || 0)} แต้ม<br>ขอบคุณที่ใช้บริการ</div></div><div class="actions no-print"><button class="primary" onclick="window.print()">พิมพ์ใบเสร็จ</button><button class="secondary" onclick="App.closeModal()">ปิด</button></div>`);
   }
 
   // ---------- Staff: Tables page ----------
@@ -522,7 +522,7 @@ const App = (() => {
         ? `${(order.items || []).length} รายการ · รวม <b>฿${Number(order.total || 0).toFixed(2)}</b><br>เปิดเมื่อ ${escapeHtml((order.created_at || "").slice(0, 16).replace("T", " "))}`
         : `ไม่มีออเดอร์`;
       const resInfo = resv.length ? `<br>📅 จอง ${resv.length} คิว (${escapeHtml(resv.map(r => r.customer_name + " " + String(r.datetime).slice(11, 16)).join(", "))})` : "";
-      const buttons = order ? `<button class="secondary" onclick="App.showMove('${tb.id}')">ย้ายโต๊ะ</button><button class="secondary" onclick="App.showMerge('${tb.id}')">รวมโต๊ะ</button>${order.split_requested?`<button class="secondary" onclick="App.splitByCustomer('${order.id}')">แยกบิลตาม Customer</button>`:""}<button class="primary" onclick="App.showCheckout('${order.id}')">เช็คบิล</button>` : "";
+      const buttons = order ? `<button class="secondary" onclick="App.showMove('${tb.id}')">ย้ายโต๊ะ</button><button class="secondary" onclick="App.showMerge('${tb.id}')">รวมโต๊ะ</button>${order.split_requested?`<button class="secondary" onclick="App.splitByCustomer('${order.id}')">แยกบิลตาม Customer</button>`:""}${order.status==="waiting_bill"?`<button class="primary" onclick="App.showCheckout('${order.id}')">เช็คบิล</button>`:`<span class="small">รอลูกค้าเรียกเช็คบิล</span>`}` : "";
       const capacityEditor = state.user?.role === "admin" ? `<label class="small">รับได้สูงสุด<input type="number" min="1" max="100" value="${Number(tb.capacity||4)}" onchange="App.setTableCapacity('${tb.id}',this.value)"></label>` : `<div class="small">รองรับสูงสุด ${Number(tb.capacity||4)} คน</div>`;
       return `<div class="table-card"><div class="top"><h3>โต๊ะ ${escapeHtml(tb.table_number)}</h3><span class="badge ${escapeHtml(tb.status)}">${escapeHtml(tb.status)}</span></div><div class="info">${info}${resInfo}</div>${capacityEditor}${select}<div class="actions">${buttons}</div></div>`;
     }).join("") || `<div class="list-card">ยังไม่มีโต๊ะ</div>`;
@@ -605,7 +605,9 @@ const App = (() => {
       staffState.tables = t.tables; renderStaffReservations(r.reservations); renderMoveRequests(m.requests);
       $("staff-orders").innerHTML = o.orders.slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).map(x => {
         const open = !["closed", "merged", "cancelled"].includes(x.status);
-        return `<div class="table-row"><div><b>โต๊ะ ${escapeHtml(x.table_number||"-")}</b><div class="small">Total ฿${Number(x.total||0).toFixed(2)}</div>${open ? `<div class="row-actions"><button class="primary" onclick="App.showCheckout('${x.id}')">เช็คบิล</button>${x.split_requested?`<button class="secondary" onclick="App.splitByCustomer('${x.id}')">แยกบิลตาม Customer</button>`:""}</div>` : ""}</div><span class="badge">${escapeHtml(x.status)}</span></div>`;
+        const checkout = x.status === "waiting_bill" ? `<button class="primary" onclick="App.showCheckout('${x.id}')">เช็คบิล</button>` : "";
+        const waiting = x.status === "open" ? `<span class="small">รอลูกค้าเรียกเช็คบิล</span>` : "";
+        return `<div class="table-row"><div><b>โต๊ะ ${escapeHtml(x.table_number||"-")}</b><div class="small">Total ฿${Number(x.total||0).toFixed(2)}</div>${open ? `<div class="row-actions">${checkout}${waiting}${x.split_requested?`<button class="secondary" onclick="App.splitByCustomer('${x.id}')">แยกบิลตาม Customer</button>`:""}</div>` : ""}</div><span class="badge">${escapeHtml(x.status)}</span></div>`;
       }).join("") || `<p class="small">ไม่มีออเดอร์</p>`;
     } catch(e) { toast(e.message); }
   }
@@ -630,6 +632,12 @@ const App = (() => {
         c.innerHTML=`<div class="list-card"><div class="section-head" style="margin:0 0 15px"><h3>User Management</h3><button class="primary" onclick="App.showStaffForm()">+ Add Staff</button></div><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th></th></tr>${d.users.map(u=>`<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.role)}</td><td>${u.active?"Yes":"No"}</td><td>${u.role!=="admin"?`<button class="secondary" onclick="App.toggleUser('${u.id}',${!u.active})">${u.active?"Disable":"Enable"}</button>`:""}</td></tr>`).join("")}</table></div>`;
       }catch(e){toast(e.message)}
     }
+    if(type==="payments") {
+      try {
+        const d=await api("/api/payment-settings"); const s=d.settings||{};
+        c.innerHTML=`<div class="list-card"><h3>Payment Settings</h3><p class="small">Admin กำหนดวิธีชำระเงินที่ Staff เลือกตอนปิดบิลได้</p><form onsubmit="App.savePaymentSettings(event)"><label><input id="pay-cash" type="checkbox" ${s.cash_enabled?"checked":""}> เปิดรับเงินสด</label><label><input id="pay-bank" type="checkbox" ${s.bank_enabled?"checked":""}> เปิดรับโอนผ่านบัญชีธนาคาร</label><label><input id="pay-qr" type="checkbox" ${s.qr_enabled?"checked":""}> เปิดรับ QR</label><label>ชื่อธนาคาร<input id="pay-bank-name" value="${escapeAttr(s.bank_name||"")}"></label><label>ชื่อบัญชี<input id="pay-account-name" value="${escapeAttr(s.account_name||"")}"></label><label>เลขบัญชี<input id="pay-account-number" value="${escapeAttr(s.account_number||"")}"></label><label>ลิงก์รูป QR Code<input id="pay-qr-url" value="${escapeAttr(s.qr_image_url||"")}" placeholder="URL รูป QR จาก Firebase Storage"></label><div class="actions"><button class="primary">บันทึก Payment Settings</button></div></form></div>`;
+      }catch(e){toast(e.message)}
+    }
     if(type==="logs") {
       try {
         const d=await api("/api/audit-logs");
@@ -637,6 +645,7 @@ const App = (() => {
       }catch(e){toast(e.message)}
     }
   }
+  async function savePaymentSettings(e){e.preventDefault();try{await api("/api/payment-settings",{method:"PATCH",body:JSON.stringify({cash_enabled:$('pay-cash').checked,bank_enabled:$('pay-bank').checked,qr_enabled:$('pay-qr').checked,bank_name:$('pay-bank-name').value,account_name:$('pay-account-name').value,account_number:$('pay-account-number').value,qr_image_url:$('pay-qr-url').value})});toast("บันทึกวิธีชำระเงินแล้ว");adminPage("payments")}catch(x){toast(x.message)}}
 
   function optionRows(options){
     return Object.entries(options||{}).map(([group,values])=>`<div class="option-group" data-group="${escapeAttr(group)}"><div class="table-row"><input class="option-group-name" value="${escapeAttr(group)}" placeholder="ชื่อกลุ่ม เช่น ขนาด"><button type="button" class="secondary" onclick="this.closest('.option-group').remove()">ลบกลุ่ม</button></div><div class="option-values">${(Array.isArray(values)?values:[]).map(v=>{const name=typeof v==="object"?v.name:v;const price=typeof v==="object"?v.price:0;return `<div class="option-value"><input class="option-value-name" value="${escapeAttr(name)}" placeholder="ค่าตัวเลือก"><input class="option-value-price" type="number" min="0" step="0.01" value="${Number(price||0)}" placeholder="ราคาเพิ่ม"><button type="button" class="secondary" onclick="this.parentElement.remove()">ลบ</button></div>`}).join("")}</div><button type="button" class="secondary" onclick="App.addOptionValue(this)">+ เพิ่มค่าตัวเลือก</button></div>`).join("");
@@ -658,5 +667,5 @@ const App = (() => {
   function escapeAttr(v){return escapeHtml(v)}
 
   restore();
-  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,closeModal,quickOrder};
+  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,savePaymentSettings,closeModal,quickOrder};
 })();

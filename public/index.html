@@ -100,7 +100,7 @@
     <div class="list-card"><h3>สถานะการจอง</h3><div id="res-summary"></div></div>
     <div class="list-card"><h3>ผู้ใช้ตามบทบาท</h3><div id="user-summary"></div></div>
   </div>
-  <div class="list-card" style="margin-top:18px"><h3>Quick Actions</h3><div class="actions"><button class="secondary" onclick="App.adminPage('menus')">Menu Management</button><button class="secondary" onclick="App.adminPage('users')">Staff / Users</button><button class="secondary" onclick="App.adminPage('logs')">Audit Logs</button></div></div>
+  <div class="list-card" style="margin-top:18px"><h3>Quick Actions</h3><div class="actions"><button class="secondary" onclick="App.adminPage('menus')">Menu Management</button><button class="secondary" onclick="App.adminPage('users')">Staff / Users</button><button class="secondary" onclick="App.adminPage('payments')">Payment Settings</button><button class="secondary" onclick="App.adminPage('logs')">Audit Logs</button></div></div>
   <div id="admin-content" class="admin-content"></div>
 </section>
 
@@ -108,7 +108,7 @@
   <div class="dashboard-head"><div><span class="eyebrow">itailaew STAFF</span><h2>Front of House</h2></div></div>
   <div class="staff-grid">
     <div class="list-card"><h3>Tables</h3><div id="tables-list"></div></div>
-    <div id="staff-notifications" class="list-card staff-notifications"><h3>การแจ้งเตือน</h3><div>กำลังโหลด...</div></div><div class="list-card"><h3>Kitchen Display <small>auto refresh 3s</small></h3><div id="kitchen-list" class="kitchen-list"></div></div>
+    <div id="staff-notifications" class="list-card staff-notifications"><h3>การแจ้งเตือน</h3><div>กำลังโหลด...</div></div><div class="list-card"><h3>Kitchen Display <small>auto refresh 30s</small></h3><div id="kitchen-list" class="kitchen-list"></div></div>
   </div>
   <div class="list-card"><div class="section-head" style="margin:0 0 10px"><h3 style="margin:0">Reservations & Queue</h3><button class="primary" onclick="App.showStaffReserve()">+ จองให้ลูกค้า</button></div><div id="staff-reservations"></div></div>
   <div class="list-card"><h3>คำขอย้ายโต๊ะ</h3><div id="staff-move-requests"></div></div>
@@ -119,7 +119,7 @@
   <div class="dashboard-head"><div><span class="eyebrow">itailaew STAFF</span><h2>Tables</h2></div><div class="legend"><span class="badge available">available</span><span class="badge occupied">occupied</span><span class="badge waiting_bill">waiting_bill</span><span class="badge reserved">reserved</span></div></div>
   <div id="tables-summary" class="stats stats-4"></div>
   <div id="tables-grid" class="tables-grid"></div>
-  <div class="small" style="margin-top:12px">อัปเดตอัตโนมัติทุก 3 วินาที</div>
+  <div class="small" style="margin-top:12px">อัปเดตอัตโนมัติทุก 30 วินาที</div>
 </section>
 
 <section id="pos" class="page protected">

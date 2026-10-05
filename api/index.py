@@ -46,6 +46,7 @@ except ImportError:
     )
 
 PUBLIC_GETS = {"/api/health", "/api/config"}
+DEFAULT_PAYMENT_SETTINGS = {"cash_enabled": True, "bank_enabled": True, "qr_enabled": True, "bank_name": "", "account_name": "", "account_number": "", "qr_image_url": ""}
 
 def new_id(prefix):
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
@@ -435,6 +436,11 @@ class handler(BaseHTTPRequestHandler):
                 return response(self, 200, {"ok": True, "restaurant": RESTAURANT_NAME, "tagline": RESTAURANT_TAGLINE, "poll_interval": POLL_INTERVAL_SECONDS})
 
             profile, _ = require_user(self.headers)
+
+            if path == "/api/payment-settings":
+                require_role(profile, "admin", "staff")
+                settings = get("payment_settings") or {}
+                return response(self, 200, {"ok": True, "settings": {**DEFAULT_PAYMENT_SETTINGS, **settings}})
 
             if path == "/api/me":
                 return response(self, 200, {"ok": True, "user": profile})
@@ -991,7 +997,10 @@ class handler(BaseHTTPRequestHandler):
                 for item in final_items:
                     item["customer_id"] = profile.get("id")
                 existing = find_by_id("orders", table.get("current_order_id")) if table.get("current_order_id") else None
-                if existing and existing.get("status") not in ("closed", "merged", "cancelled"):
+                # A bill waiting for checkout is already a separate billing
+                # event. A later customer order must start a new round rather
+                # than mutating that bill; only table moves preserve it.
+                if existing and existing.get("status") == "open":
                     order_id = existing["id"]
                     all_items = existing.get("items", []) + final_items
                     bill = calculate_bill(all_items, existing.get("discount", 0))
@@ -1029,8 +1038,11 @@ class handler(BaseHTTPRequestHandler):
                 if new_table.get("status") != "available":
                     raise ValueError("โต๊ะใหม่ไม่ว่าง")
                 order_id = old_table.get("current_order_id")
-                patch(f"tables/{old_id}", {"status": "available", "current_order_id": None})
-                patch(f"tables/{new_table_id}", {"status": "occupied", "current_order_id": order_id, "current_round_id": old_table.get("current_round_id") or (find_by_id("orders", order_id) or {}).get("round_id")})
+                members = table_members(old_table)
+                presence = old_table.get("member_last_seen") if isinstance(old_table.get("member_last_seen"), dict) else {}
+                order = find_by_id("orders", order_id) if order_id else None
+                patch(f"tables/{old_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "member_last_seen": {}, "party_size": None})
+                patch(f"tables/{new_table_id}", {"status": "occupied", "current_order_id": order_id, "current_round_id": old_table.get("current_round_id") or (order or {}).get("round_id") or order_id, "claimed_by": old_table.get("claimed_by") or (members[0] if members else None), "occupant_ids": members, "member_last_seen": presence, "party_size": old_table.get("party_size")})
                 if order_id:
                     patch(f"orders/{order_id}", {"table_id": new_table_id, "table_number": new_table.get("table_number")})
                 audit(profile, "MOVE_TABLE", "table", old_id, f"to={new_table_id}")
@@ -1116,6 +1128,22 @@ class handler(BaseHTTPRequestHandler):
             path = urlparse(self.path).path
             data = json_body(self)
             profile, _ = require_user(self.headers)
+
+            if path == "/api/payment-settings":
+                require_role(profile, "admin")
+                settings = {
+                    "cash_enabled": bool(data.get("cash_enabled", True)),
+                    "bank_enabled": bool(data.get("bank_enabled", True)),
+                    "qr_enabled": bool(data.get("qr_enabled", True)),
+                    "bank_name": clean_text(data.get("bank_name", ""), "ชื่อธนาคาร", 120),
+                    "account_name": clean_text(data.get("account_name", ""), "ชื่อบัญชี", 120),
+                    "account_number": clean_text(data.get("account_number", ""), "เลขบัญชี", 80),
+                    "qr_image_url": str(data.get("qr_image_url", ""))[:1000],
+                    "updated_at": now_iso(),
+                }
+                put("payment_settings", settings)
+                audit(profile, "UPDATE_PAYMENT_SETTINGS", "settings", "payment_settings", "อัปเดตวิธีชำระเงิน")
+                return response(self, 200, {"ok": True, "settings": settings})
 
             if path.startswith("/api/menus/"):
                 require_role(profile, "admin")
@@ -1203,8 +1231,11 @@ class handler(BaseHTTPRequestHandler):
                     if not old_table or not new_table or new_table.get("status") != "available":
                         raise ValueError("โต๊ะปลายทางไม่ว่างหรือไม่พบโต๊ะ")
                     order_id = old_table.get("current_order_id")
-                    patch(f"tables/{request['table_id']}", {"status": "available", "current_order_id": None, "claimed_by": None, "party_size": None})
-                    patch(f"tables/{request['new_table_id']}", {"status": "occupied", "current_order_id": order_id, "claimed_by": request.get("customer_id"), "party_size": old_table.get("party_size")})
+                    members = table_members(old_table)
+                    presence = old_table.get("member_last_seen") if isinstance(old_table.get("member_last_seen"), dict) else {}
+                    old_order = find_by_id("orders", order_id) if order_id else None
+                    patch(f"tables/{request['table_id']}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "member_last_seen": {}, "party_size": None})
+                    patch(f"tables/{request['new_table_id']}", {"status": "occupied", "current_order_id": order_id, "current_round_id": old_table.get("current_round_id") or (old_order or {}).get("round_id") or order_id, "claimed_by": old_table.get("claimed_by") or (members[0] if members else request.get("customer_id")), "occupant_ids": members or [request.get("customer_id")], "member_last_seen": presence, "party_size": old_table.get("party_size")})
                     if order_id:
                         patch(f"orders/{order_id}", {"table_id": request["new_table_id"], "table_number": new_table.get("table_number")})
                     patch(f"table_move_requests/{request_id}", {"status": status, "updated_at": now_iso(), "updated_by": profile.get("id")})
@@ -1257,10 +1288,18 @@ class handler(BaseHTTPRequestHandler):
                     return error_response(self, 400, "ไม่สามารถเช็คบิลซ้ำได้")
                 if order.get("status") == "cancelled":
                     return error_response(self, 400, "บิลนี้ถูกยกเลิกแล้ว ไม่สามารถเช็คบิลได้")
+                if order.get("status") != "waiting_bill":
+                    return error_response(self, 400, "ต้องรอ Customer เรียกเช็คบิลก่อน")
                 if order.get("checkout_lock"):
                     return error_response(self, 409, "บิลนี้กำลังถูกเช็คบิลโดยพนักงานคนอื่น")
                 patch(f"orders/{order_id}", {"checkout_lock": {"staff_id": profile.get("id"), "at": now_iso()}})
                 order["checkout_lock"] = True
+                payment_method = str(data.get("payment_method") or "cash").strip().lower()
+                payment_key = {"cash": "cash_enabled", "bank": "bank_enabled", "qr": "qr_enabled"}.get(payment_method)
+                payment_settings = {**DEFAULT_PAYMENT_SETTINGS, **(get("payment_settings") or {})}
+                if not payment_key or not payment_settings.get(payment_key):
+                    patch(f"orders/{order_id}", {"checkout_lock": None})
+                    raise ValueError("วิธีชำระเงินนี้ยังไม่ได้เปิดใช้งานโดย Admin")
                 discount = to_positive_number(data.get("discount", 0), "ส่วนลด", allow_zero=True)
                 requested_points, points_reduction, subtotal = points_discount(order.get("items", []), order.get("points_to_use", 0))
                 if discount + points_reduction > subtotal:
@@ -1277,14 +1316,16 @@ class handler(BaseHTTPRequestHandler):
                     current_points = int(user.get("member_points", 0) or 0)
                     if requested_points > current_points:
                         raise ValueError("แต้มของลูกค้าไม่เพียงพอ")
-                closed = {**bill, "earned_points": earned_points, "status": "closed", "checkout_lock": None, "closed_at": now_iso(), "closed_by": profile["id"]}
+                closed = {**bill, "earned_points": earned_points, "status": "closed", "checkout_lock": None, "closed_at": now_iso(), "closed_by": profile["id"], "payment_method": payment_method}
                 patch(f"orders/{order_id}", closed)
                 table_id = order.get("table_id")
                 if table_id:
                     all_orders = get("orders") or {}
                     remaining = [o for o in (all_orders.values() if isinstance(all_orders, dict) else []) if o.get("table_id") == table_id and o.get("id") != order_id and o.get("status") not in ("closed", "merged", "cancelled")]
                     if remaining:
-                        patch(f"tables/{table_id}", {"status": "waiting_bill", "current_order_id": remaining[0].get("id"), "current_round_id": remaining[0].get("round_id") or remaining[0].get("id")})
+                        next_order = remaining[0]
+                        next_status = "waiting_bill" if next_order.get("status") == "waiting_bill" else "occupied"
+                        patch(f"tables/{table_id}", {"status": next_status, "current_order_id": next_order.get("id"), "current_round_id": next_order.get("round_id") or next_order.get("id")})
                     else:
                         patch(f"tables/{table_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "party_size": None, "split_requested": False})
                 if customer_id:
