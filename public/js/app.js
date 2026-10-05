@@ -1,5 +1,5 @@
 const App = (() => {
-  const state = { user: null, token: localStorage.getItem("itailaew_token"), refreshToken: localStorage.getItem("itailaew_refresh_token"), authMode: "login", menuPage: 1, polling: null, presenceTimer: null, tableVerified: false, selectedTable: null, pendingTable: null, cart: {}, hasActiveOrder: false, hadActiveOrder: false, submittingCart: false };
+  const state = { user: null, token: localStorage.getItem("itailaew_token"), refreshToken: localStorage.getItem("itailaew_refresh_token"), authMode: "login", menuPage: 1, polling: null, presenceTimer: null, customerWatchdog: null, tableVerified: false, selectedTable: null, pendingTable: null, cart: {}, hasActiveOrder: false, hadActiveOrder: false, submittingCart: false };
   const $ = id => document.getElementById(id);
 
   async function api(path, options = {}) {
@@ -50,6 +50,7 @@ const App = (() => {
     if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 10000); }
     if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 10000); }
     if (id === "pos") loadPos();
+    if (state.user?.role === "customer" && !state.customerWatchdog) startCustomerWatchdog();
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -106,6 +107,7 @@ const App = (() => {
       try { await api("/api/customer/leave", {method:"POST", body:JSON.stringify({reason:"logout"})}); } catch (_) { }
     }
     if (state.polling) { clearInterval(state.polling); state.polling = null; }
+    if (state.customerWatchdog) { clearInterval(state.customerWatchdog); state.customerWatchdog = null; }
     stopPresence(); state.user = null; state.token = null; state.refreshToken = null; state.tableVerified=false; state.hadActiveOrder=false; state.hasActiveOrder=false; localStorage.removeItem("itailaew_token"); localStorage.removeItem("itailaew_refresh_token"); localStorage.removeItem("itailaew_current_page"); state.selectedTable=null; state.cart={};
     refreshNav();
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
@@ -140,6 +142,7 @@ const App = (() => {
         data = {user: renewed.user};
       }
       state.user = data.user;
+      if(state.user.role === "customer") startCustomerWatchdog();
       loadUserStorage();
       state.tableVerified = false;
       validateSelectedTableForUser();
@@ -250,6 +253,35 @@ const App = (() => {
   }
   function clearSelectedTable(){ state.selectedTable=null; state.tableVerified=false; stopPresence(); if(state.user)localStorage.removeItem(tableKey()); refreshNav(); }
   function clearCustomerSessionData(){ state.cart={}; state.selectedTable=null; state.tableVerified=false; state.hadActiveOrder=false; stopPresence(); if(state.user){localStorage.removeItem(cartKey());localStorage.removeItem(tableKey());} refreshNav(); }
+  function returnCustomerToTableSelect(message){
+    clearCustomerSessionData();
+    state.hasActiveOrder=false;
+    const orders=$("customer-orders");
+    if(orders) orders.innerHTML="";
+    localStorage.setItem("itailaew_current_page","table-select");
+    if(message) toast(message);
+    go("table-select");
+  }
+  async function checkCustomerCheckoutState(){
+    if(state.user?.role!=="customer" || !state.tableVerified || !state.selectedTable) return;
+    try{
+      const tables=await api("/api/customer/tables");
+      const live=tables.tables.find(t=>tableHasCurrentUser(t));
+      if(!live){
+        if(state.hadActiveOrder || state.hasActiveOrder) returnCustomerToTableSelect("บิลปิดแล้ว กรุณาเลือกโต๊ะใหม่");
+        return;
+      }
+      state.selectedTable=live;
+      const orders=await api(`/api/orders?table_id=${encodeURIComponent(live.id)}`);
+      const active=(orders.orders||[]).filter(o=>!['closed','merged','cancelled'].includes(o.status));
+      if((state.hadActiveOrder || state.hasActiveOrder) && !active.length) returnCustomerToTableSelect("เช็คบิลเสร็จแล้ว กรุณาเลือกโต๊ะใหม่");
+    }catch(_){ /* keep the current page during a transient network failure */ }
+  }
+  function startCustomerWatchdog(){
+    if(state.customerWatchdog) clearInterval(state.customerWatchdog);
+    checkCustomerCheckoutState();
+    state.customerWatchdog=setInterval(checkCustomerCheckoutState,10000);
+  }
   function tableHasCurrentUser(table){ return !!(table && state.user && ((Array.isArray(table.occupant_ids) && table.occupant_ids.includes(state.user.id)) || table.claimed_by === state.user.id)); }
   function validateSelectedTableForUser(){ if(state.user?.role === "customer" && state.selectedTable && !tableHasCurrentUser(state.selectedTable)) clearSelectedTable(); }
   async function quickOrder(menuId){
@@ -339,9 +371,9 @@ const App = (() => {
   async function loadCustomer(){
     if(!state.user)return; try{const fresh=await api("/api/me");if(fresh.user){state.user=fresh.user;localStorage.setItem("itailaew_user",JSON.stringify(state.user));}}catch(_){} $("customer-name").textContent=state.user.name; $("customer-points").textContent=state.user.member_points||0; renderCart();
     try{
-      let selected=selectedTable(); if(selected){const moves=await api("/api/customer/table-move-requests");const td=await api("/api/customer/tables");const completed=moves.requests.find(r=>r.status==="completed");if(completed){const moved=td.tables.find(t=>t.id===completed.new_table_id&&tableHasCurrentUser(t));if(moved){state.selectedTable=moved;localStorage.setItem(tableKey(),JSON.stringify(moved));}}let live=td.tables.find(t=>t.id===state.selectedTable?.id);if(!live||!tableHasCurrentUser(live)) live=adoptMovedCustomerTable(td.tables);if(!live){const shouldLogout=state.hadActiveOrder;state.tableVerified=false;state.selectedTable=null;stopPresence();refreshNav();if(shouldLogout) await logout();return;}state.selectedTable=live;state.tableVerified=true;selected=live;startPresence();}
+      let selected=selectedTable(); if(selected){const moves=await api("/api/customer/table-move-requests");const td=await api("/api/customer/tables");const completed=moves.requests.find(r=>r.status==="completed");if(completed){const moved=td.tables.find(t=>t.id===completed.new_table_id&&tableHasCurrentUser(t));if(moved){state.selectedTable=moved;localStorage.setItem(tableKey(),JSON.stringify(moved));}}let live=td.tables.find(t=>t.id===state.selectedTable?.id);if(!live||!tableHasCurrentUser(live)) live=adoptMovedCustomerTable(td.tables);if(!live){if(state.hadActiveOrder||state.hasActiveOrder)returnCustomerToTableSelect("บิลปิดแล้ว กรุณาเลือกโต๊ะใหม่");return;}state.selectedTable=live;state.tableVerified=true;selected=live;startPresence();}
       const d=await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id || "")}`); const active=d.orders.filter(o=>!['closed','merged','cancelled'].includes(o.status)); state.hadActiveOrder=state.hasActiveOrder||state.hadActiveOrder||active.length>0; state.hasActiveOrder=active.length>0; refreshNav();
-      if(state.hadActiveOrder && !active.length){await logout();return;}
+      if(state.hadActiveOrder && !active.length){returnCustomerToTableSelect("เช็คบิลเสร็จแล้ว กรุณาเลือกโต๊ะใหม่");return;}
       $("customer-orders").innerHTML=`<h3>รายการอาหารที่สั่ง</h3>`+renderCustomerOrders(d.orders);
       if(active.length) $("customer-orders").insertAdjacentHTML("beforeend",`<div class="actions"><button class="primary" onclick="App.go('menu')">สั่งเมนูใหม่</button><button class="secondary" onclick="App.requestSplitBill()">ขอแยกบิล</button></div>`);
     }catch(e){ $("customer-orders").innerHTML=`<p class="small">${escapeHtml(e.message)}</p>`; }
