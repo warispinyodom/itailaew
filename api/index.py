@@ -292,25 +292,28 @@ def repair_stale_tables():
         if not isinstance(table, dict) or table.get("status") not in {"occupied", "waiting_bill"}:
             continue
         members = table_members(table)
+        active = [o for o in (orders.values() if isinstance(orders, dict) else []) if o.get("table_id") == table.get("id") and o.get("status") not in {"closed", "merged", "cancelled"}]
         presence = table.get("member_last_seen") if isinstance(table.get("member_last_seen"), dict) else {}
         stale_members = []
         for member in members:
             seen = presence.get(member)
             try:
                 seen_at = datetime.fromisoformat(str(seen).replace("Z", "+00:00")) if seen else None
-                if seen_at and datetime.now(timezone.utc) - seen_at > timedelta(seconds=90):
+                # Every new claim writes member_last_seen immediately. A
+                # missing/invalid timestamp therefore means legacy or stale
+                # membership; do not keep a table occupied just because an
+                # old open order still points at it.
+                if not seen_at or datetime.now(timezone.utc) - seen_at > timedelta(seconds=90):
                     stale_members.append(member)
             except (TypeError, ValueError):
-                continue
+                stale_members.append(member)
         if stale_members:
-            remaining = [member for member in members if member not in stale_members]
-            remaining_presence = {k: v for k, v in presence.items() if k in remaining}
-            owner = table.get("claimed_by")
-            if str(owner) in stale_members:
-                owner = remaining[0] if remaining else None
-            patch(f"tables/{table.get('id')}", {"occupant_ids": remaining, "member_last_seen": remaining_presence, "claimed_by": owner})
-            members = remaining
-        active = [o for o in (orders.values() if isinstance(orders, dict) else []) if o.get("table_id") == table.get("id") and o.get("status") not in {"closed", "merged", "cancelled"}]
+            # Reuse the same path as an explicit Logout: remove the stale
+            # member's items, cancel its empty bill, update the remaining
+            # members, and release the table when nobody remains.
+            for member in stale_members:
+                leave_customer_tables(member)
+            continue
         current_order = find_by_id("orders", table.get("current_order_id")) if table.get("current_order_id") else None
         current_is_inactive = bool(table.get("current_order_id")) and (not current_order or current_order.get("status") in {"closed", "merged", "cancelled"})
         if current_is_inactive and not active:
