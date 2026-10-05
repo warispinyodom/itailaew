@@ -197,9 +197,11 @@ const App = (() => {
       if (target === "tables") { loadTables(); if (!state.polling) state.polling = setInterval(loadTables, 8000); }
       if (target === "pos") loadPos();
     } catch (_) {
-      // Best effort: if the token is still accepted, transfer/clear table ownership
-      // before clearing the expired local session.
-      try { if (state.user?.role === "customer" && state.selectedTable) await api("/api/customer/leave", {method:"POST", body:JSON.stringify({reason:"session_expired"})}); } catch (_) { }
+      // Do not destroy a valid local identity because a secondary page/data
+      // request failed during boot. Only clear auth when /api/me and refresh
+      // token recovery both failed before a user was established.
+      if (state.user) { refreshNav(); return; }
+      state.tableVerified=false;
       await logout();
     }
   }
@@ -337,7 +339,7 @@ const App = (() => {
     if(!state.user)return; $("customer-name").textContent=state.user.name; $("customer-points").textContent=state.user.member_points||0; renderCart();
     try{
       const selected=selectedTable(); if(selected){const moves=await api("/api/customer/table-move-requests");const td=await api("/api/customer/tables");const completed=moves.requests.find(r=>r.status==="completed");if(completed){const moved=td.tables.find(t=>t.id===completed.new_table_id&&t.claimed_by===state.user.id);if(moved){state.selectedTable=moved;localStorage.setItem(tableKey(),JSON.stringify(moved));}}const live=td.tables.find(t=>t.id===state.selectedTable?.id);if(!live||live.status==="available"||!tableHasCurrentUser(live)){const had=state.hadActiveOrder;clearCustomerSessionData();state.hasActiveOrder=false;if(had){toast("บิลปิดแล้ว โต๊ะกลับมาว่าง");go("home");return;}return;}}
-      const d=await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id || "")}`); const active=d.orders.filter(o=>!['closed','merged'].includes(o.status)); state.hadActiveOrder=state.hasActiveOrder||active.length>0; state.hasActiveOrder=active.length>0; refreshNav();
+      const d=await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id || "")}`); const active=d.orders.filter(o=>!['closed','merged','cancelled'].includes(o.status)); state.hadActiveOrder=state.hasActiveOrder||active.length>0; state.hasActiveOrder=active.length>0; refreshNav();
       $("customer-orders").innerHTML=`<h3>รายการอาหารที่สั่ง</h3>`+renderCustomerOrders(d.orders);
       if(active.length) $("customer-orders").insertAdjacentHTML("beforeend",`<div class="actions"><button class="primary" onclick="App.go('menu')">สั่งเมนูใหม่</button><button class="secondary" onclick="App.requestSplitBill()">ขอแยกบิล</button></div>`);
     }catch(e){ $("customer-orders").innerHTML=`<p class="small">${escapeHtml(e.message)}</p>`; }
@@ -350,7 +352,7 @@ const App = (() => {
     try{
       const live=await syncLiveCustomerTable(); if(!live)return toast("กรุณาเลือกโต๊ะก่อนขอแยกบิล");
       const d=await api("/api/customer/split-bill-requests",{method:"POST",body:JSON.stringify({table_id:live.id})});
-      const members=d.members||[]; const names={}; members.forEach(id=>{names[id]=id===state.user.id?"ฉัน":id});
+      const members=d.members||[]; const profiles=d.member_profiles||{}; const names={}; members.forEach(id=>{names[id]=id===state.user.id?"ฉัน":(profiles[id]?.name||id)});
       const orders=(d.orders||[]).filter(o=>!['closed','merged','cancelled'].includes(o.status));
       const rows=orders.map(order=>`<div class="list-card" style="margin:8px 0"><b>${order.bill_group==='split'?'บิลย่อย':'บิลกลาง'} · ${escapeHtml(order.id)}</b>${(order.items||[]).map((it,i)=>`<label class="table-row" style="gap:10px"><span style="flex:1">${escapeHtml(it.name||'เมนู')} × ${Number(it.quantity||0)}<small class="small" style="display:block">฿${(Number(it.unit_price||0)*Number(it.quantity||0)).toFixed(2)}</small></span><select class="split-owner" data-order="${escapeAttr(order.id)}" data-index="${i}">${members.map(id=>`<option value="${escapeAttr(id)}" ${String(it.customer_id||d.default_owner)===String(id)?'selected':''}>${escapeHtml(names[id])}</option>`).join('')}</select></label>`).join('')}</div>`).join('');
       openModal(`<h2>เลือกเมนูสำหรับแต่ละบิล</h2><p class="small">ยังคงเป็นโต๊ะเดียวกัน แต่จะแยกเป็นหลายบิล เจ้าของเริ่มต้นคือคนแรกของโต๊ะ และสามารถเปลี่ยนได้ภายหลัง</p><div>${rows||'<p>ไม่มีรายการอาหาร</p>'}</div><div class="actions"><button class="primary" onclick="App.saveSplitOwners('${escapeAttr(selectedTable()?.id||'')}')">บันทึกการแยกบิล</button><button class="secondary" onclick="App.closeModal()">ยกเลิก</button></div>`);
@@ -366,7 +368,9 @@ const App = (() => {
       const b=await api(`/api/orders/${o.id}/bill?discount=0`);
       const points=Number(b.customer_points ?? state.user?.member_points ?? 0); const maxUsable=Math.floor(points/100)*100;
       const pointChoice=maxUsable?`<label>ใช้แต้มสะสม (100 แต้ม ลด 10 บาท)<input id="customer-points-use" type="number" min="0" max="${maxUsable}" step="100" value="0"><span class="small">ใช้ได้สูงสุด ${maxUsable} แต้ม</span></label>`:`<p class="small">แต้มสะสมปัจจุบัน ${points} แต้ม — ต้องมีอย่างน้อย 100 แต้มจึงใช้เป็นส่วนลดได้</p>`;
-      openModal(`<h2>ยอดบิล โต๊ะ ${escapeHtml(o.table_number||"")}</h2>${billRows(b.bill)}${pointChoice}<p class="small">กดแล้วระบบจะแจ้งพนักงานให้มาเช็คบิล และแต้มจะถูกหักเมื่อปิดบิลสำเร็จ</p><div class="actions"><button class="primary" onclick="App.callStaff('${o.id}')">เรียกพนักงานเช็คบิล</button><button class="secondary" onclick="App.closeModal()">ปิด</button></div>`)
+      const checkoutAction=o.status==="waiting_bill"?`<button class="primary" disabled>พนักงานกำลังมา</button>`:`<button class="primary" onclick="App.callStaff('${o.id}')">เรียกพนักงานเช็คบิล</button>`;
+      const waitingNote=o.status==="waiting_bill"?`<p class="small">พนักงานกำลังมา กรุณารอสักครู่ ไม่ต้องกดเรียกซ้ำ</p>`:`<p class="small">กดแล้วระบบจะแจ้งพนักงานให้มาเช็คบิล และแต้มจะถูกหักเมื่อปิดบิลสำเร็จ</p>`;
+      openModal(`<h2>ยอดบิล โต๊ะ ${escapeHtml(o.table_number||"")}</h2>${billRows(b.bill)}${pointChoice}${waitingNote}<div class="actions">${checkoutAction}<button class="secondary" onclick="App.closeModal()">ปิด</button></div>`)
     }catch(e){toast(e.message)}
   }
   async function callStaff(id){try{const points=Number($("customer-points-use")?.value||0);await api(`/api/orders/${id}/request-checkout`,{method:"PATCH",body:JSON.stringify({points_to_use:points})});closeModal();toast("เรียกพนักงานเช็คบิลแล้ว");loadCustomer()}catch(e){toast(e.message)}}
@@ -600,7 +604,7 @@ const App = (() => {
       $("staff-notifications").innerHTML = `<h3>การแจ้งเตือน</h3>` + ((n.notifications||[]).map(x=>`<div class="table-row"><div><b>${escapeHtml(x.title||"")}</b><div class="small">${escapeHtml(x.detail||"")}</div></div><span class="small">${escapeHtml(String(x.created_at||"").slice(11,19))}</span></div>`).join("") || `<p class="small">ไม่มีการแจ้งเตือน</p>`);
       staffState.tables = t.tables; renderStaffReservations(r.reservations); renderMoveRequests(m.requests);
       $("staff-orders").innerHTML = o.orders.slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).map(x => {
-        const open = !["closed", "merged"].includes(x.status);
+        const open = !["closed", "merged", "cancelled"].includes(x.status);
         return `<div class="table-row"><div><b>โต๊ะ ${escapeHtml(x.table_number||"-")}</b><div class="small">Total ฿${Number(x.total||0).toFixed(2)}</div>${open ? `<div class="row-actions"><button class="primary" onclick="App.showCheckout('${x.id}')">เช็คบิล</button>${x.split_requested?`<button class="secondary" onclick="App.splitByCustomer('${x.id}')">แยกบิลตาม Customer</button>`:""}</div>` : ""}</div><span class="badge">${escapeHtml(x.status)}</span></div>`;
       }).join("") || `<p class="small">ไม่มีออเดอร์</p>`;
     } catch(e) { toast(e.message); }

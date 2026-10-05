@@ -292,6 +292,13 @@ def repair_stale_tables():
             patch(f"tables/{table.get('id')}", {"occupant_ids": remaining, "member_last_seen": remaining_presence, "claimed_by": owner})
             members = remaining
         active = [o for o in (orders.values() if isinstance(orders, dict) else []) if o.get("table_id") == table.get("id") and o.get("status") not in {"closed", "merged", "cancelled"}]
+        current_order = find_by_id("orders", table.get("current_order_id")) if table.get("current_order_id") else None
+        current_is_inactive = bool(table.get("current_order_id")) and (not current_order or current_order.get("status") in {"closed", "merged", "cancelled"})
+        if current_is_inactive and not active:
+            table_id = table.get("id")
+            patch(f"tables/{table_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "member_last_seen": {}, "party_size": None, "split_requested": False, "split_requested_by": None, "split_requested_at": None})
+            post("audit_logs", {"id": new_id("log"), "action": "AUTO_RELEASE_CANCELLED_BILL_TABLE", "target_type": "table", "target_id": table_id, "detail": "คืนโต๊ะว่างเพราะ current bill ถูกยกเลิกหรือปิดแล้ว", "timestamp": now_iso()})
+            continue
         # A customer can select a table before placing the first order. Keep
         # that shared table occupied so other clients see the same members.
         if members:
@@ -497,8 +504,8 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     require_staff(profile)
                 order = find_by_id("orders", path.split("/")[-2])
-                if not order or order.get("status") in ("closed", "merged"):
-                    return error_response(self, 404, "ไม่พบออเดอร์หรือบิลถูกปิดแล้ว")
+                if not order or order.get("status") in ("closed", "merged", "cancelled"):
+                    return error_response(self, 404, "ไม่พบออเดอร์หรือบิลถูกปิดหรือยกเลิกแล้ว")
                 discount = to_positive_number(qs.get("discount", ["0"])[0] or 0, "ส่วนลด", allow_zero=True)
                 requested_points = int(order.get("points_to_use", 0) or 0)
                 _, points_reduction, subtotal = points_discount(order.get("items", []), requested_points)
@@ -830,15 +837,19 @@ class handler(BaseHTTPRequestHandler):
                     members = table_members(current)
                     if uid in members:
                         meta["already"] = True
-                        return {**current, "occupant_ids": members}
+                        seen = current.get("member_last_seen") if isinstance(current.get("member_last_seen"), dict) else {}
+                        seen[uid] = now_iso()
+                        return {**current, "occupant_ids": members, "member_last_seen": seen}
                     if current.get("status") == "reserved":
                         raise ValueError("โต๊ะนี้มีการจองไว้ กรุณาเลือกโต๊ะอื่น")
                     if current.get("status") == "available" and not members:
-                        return {**current, "status": "occupied", "claimed_by": uid, "occupant_ids": [uid]}
+                        return {**current, "status": "occupied", "claimed_by": uid, "occupant_ids": [uid], "member_last_seen": {uid: now_iso()}}
                     limit = int(current.get("party_size") or 0)
                     if current.get("status") in ("occupied", "waiting_bill") and limit and len(members) < limit:
                         meta["joined"] = True
-                        return {**current, "occupant_ids": members + [uid]}
+                        seen = current.get("member_last_seen") if isinstance(current.get("member_last_seen"), dict) else {}
+                        seen[uid] = now_iso()
+                        return {**current, "occupant_ids": members + [uid], "member_last_seen": seen}
                     raise ValueError("โต๊ะนี้เต็มแล้ว กรุณาเลือกโต๊ะอื่น")
                 table = transaction(f"tables/{table_id}", claim_update)
                 members = table_members(table)
@@ -857,7 +868,9 @@ class handler(BaseHTTPRequestHandler):
                     raise ValueError("โต๊ะนี้กำหนดจำนวนคนโดยลูกค้าคนแรกแล้ว")
                 if party_size > capacity:
                     raise ValueError(f"โต๊ะนี้รองรับได้สูงสุด {capacity} คน")
-                patch(f"tables/{table_id}", {"party_size": party_size, "occupant_ids": table_members(table)})
+                seen = table.get("member_last_seen") if isinstance(table.get("member_last_seen"), dict) else {}
+                seen[str(profile.get("id"))] = now_iso()
+                patch(f"tables/{table_id}", {"party_size": party_size, "occupant_ids": table_members(table), "member_last_seen": seen})
                 return response(self, 200, {"ok": True, "table": {**table, "party_size": party_size, "capacity": capacity}})
             if path == "/api/customer/leave":
                 require_role(profile, "customer")
@@ -919,6 +932,13 @@ class handler(BaseHTTPRequestHandler):
                 # The table's first customer owns unassigned items by default.
                 default_owner = str(table.get("claimed_by") or (table_members(table) or [profile.get("id")])[0])
                 members = table_members(table)
+                member_profiles = {}
+                for member_id in members:
+                    try:
+                        member = get_profile(member_id)
+                        member_profiles[member_id] = {"id": member_id, "name": member.get("name") or member.get("email") or member_id}
+                    except Exception:
+                        member_profiles[member_id] = {"id": member_id, "name": member_id}
                 assignments = data.get("assignments") or []
                 allowed = {str(x) for x in members}
                 already_split = any(o.get("bill_group") == "split" for o in active)
@@ -946,7 +966,7 @@ class handler(BaseHTTPRequestHandler):
                     patch(f"tables/{table_id}", {"split_requested": True, "split_requested_by": profile.get("id"), "split_requested_at": now_iso()})
                     notify_staff("split_request", "มีคำขอแยกบิล", f"โต๊ะ {table.get('table_number')}", table_id)
                 message = "อัปเดตเจ้าของรายการแล้ว" if already_split else "ส่งคำขอแยกบิลให้ Staff แล้ว"
-                return response(self, 201, {"ok": True, "message": message, "members": members, "orders": active, "default_owner": default_owner})
+                return response(self, 201, {"ok": True, "message": message, "members": members, "member_profiles": member_profiles, "orders": active, "default_owner": default_owner})
             if path == "/api/customer/orders":
                 require_role(profile, "customer")
                 table_id = clean_text(data.get("table_id"), "โต๊ะ", 50)
@@ -1209,8 +1229,8 @@ class handler(BaseHTTPRequestHandler):
                 # even when the central bill has no customer_id or belongs to the first member.
                 if not order or not (order.get("customer_id") == profile.get("id") or (bill_table and table_has_member(bill_table, profile.get("id")))):
                     return error_response(self, 404, "ไม่พบบิลของคุณ")
-                if order.get("status") in ("closed", "merged"):
-                    raise ValueError("บิลนี้ปิดแล้ว ไม่สามารถเช็คบิลซ้ำได้")
+                if order.get("status") in ("closed", "merged", "cancelled"):
+                    raise ValueError("บิลนี้ถูกยกเลิกหรือปิดแล้ว ไม่สามารถเช็คบิลซ้ำได้")
                 if order.get("status") == "waiting_bill":
                     return response(self, 200, {"ok": True, "already_requested": True, "message": "เรียกเช็คบิลแล้ว กำลังรอพนักงาน"})
                 requested_points = int(data.get("points_to_use", 0) or 0)
@@ -1235,6 +1255,8 @@ class handler(BaseHTTPRequestHandler):
                     return error_response(self, 404, "ไม่พบออเดอร์")
                 if order.get("status") in ("closed", "merged"):
                     return error_response(self, 400, "ไม่สามารถเช็คบิลซ้ำได้")
+                if order.get("status") == "cancelled":
+                    return error_response(self, 400, "บิลนี้ถูกยกเลิกแล้ว ไม่สามารถเช็คบิลได้")
                 if order.get("checkout_lock"):
                     return error_response(self, 409, "บิลนี้กำลังถูกเช็คบิลโดยพนักงานคนอื่น")
                 patch(f"orders/{order_id}", {"checkout_lock": {"staff_id": profile.get("id"), "at": now_iso()}})
@@ -1260,7 +1282,7 @@ class handler(BaseHTTPRequestHandler):
                 table_id = order.get("table_id")
                 if table_id:
                     all_orders = get("orders") or {}
-                    remaining = [o for o in (all_orders.values() if isinstance(all_orders, dict) else []) if o.get("table_id") == table_id and o.get("id") != order_id and o.get("status") not in ("closed", "merged")]
+                    remaining = [o for o in (all_orders.values() if isinstance(all_orders, dict) else []) if o.get("table_id") == table_id and o.get("id") != order_id and o.get("status") not in ("closed", "merged", "cancelled")]
                     if remaining:
                         patch(f"tables/{table_id}", {"status": "waiting_bill", "current_order_id": remaining[0].get("id"), "current_round_id": remaining[0].get("round_id") or remaining[0].get("id")})
                     else:
