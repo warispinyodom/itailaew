@@ -23,9 +23,9 @@ try:
         update_user_role, set_user_active, AuthError
     )
     from .biz_logic import (
-        now_iso, clean_text, to_positive_number, to_positive_int, calculate_bill,
+        now_iso, restaurant_now, normalize_storage_image_url, clean_text, to_positive_number, to_positive_int, calculate_bill,
         paginate, search_filter_sort, ensure_table_can_order, validate_menu_payload,
-        parse_reservation_dt, find_reservation_conflict, validate_person_name, MENU_CATEGORIES
+        parse_reservation_dt, parse_reservation_record_dt, find_reservation_conflict, validate_person_name, MENU_CATEGORIES
     )
 except ImportError:
     # Supports `python api/index.py` from the project root as well as package imports on Vercel.
@@ -40,9 +40,9 @@ except ImportError:
         update_user_role, set_user_active, AuthError
     )
     from biz_logic import (
-        now_iso, clean_text, to_positive_number, to_positive_int, calculate_bill,
+        now_iso, restaurant_now, normalize_storage_image_url, clean_text, to_positive_number, to_positive_int, calculate_bill,
         paginate, search_filter_sort, ensure_table_can_order, validate_menu_payload,
-        parse_reservation_dt, find_reservation_conflict, validate_person_name, MENU_CATEGORIES
+        parse_reservation_dt, parse_reservation_record_dt, find_reservation_conflict, validate_person_name, MENU_CATEGORIES
     )
 
 PUBLIC_GETS = {"/api/health", "/api/config"}
@@ -70,6 +70,13 @@ def json_body(handler):
     if not isinstance(data, dict):
         raise ValueError("ข้อมูลต้องเป็น JSON object")
     return data
+
+def normalize_storage_bucket(value):
+    """Firebase expects a bucket name, not a gs://bucket URI."""
+    bucket = str(value or "").strip()
+    if bucket.lower().startswith("gs://"):
+        bucket = bucket[5:]
+    return bucket.strip("/")
 
 def save_uploaded_image(data, auth_token=""):
     raw = data.get("image_data")
@@ -101,8 +108,9 @@ def save_uploaded_image(data, auth_token=""):
     # Prefer the explicit Vercel variable, then support both Firebase bucket
     # naming formats when it was not configured yet.
     buckets = []
-    if FIREBASE_STORAGE_BUCKET:
-        buckets.append(FIREBASE_STORAGE_BUCKET)
+    configured_bucket = normalize_storage_bucket(FIREBASE_STORAGE_BUCKET)
+    if configured_bucket:
+        buckets.append(configured_bucket)
     match = re.match(r"https://([^.]+)-default-rtdb(?:-[^.]+)?\.", FIREBASE_DB_URL or "")
     if match:
         project_id = match.group(1)
@@ -131,7 +139,8 @@ def save_uploaded_image(data, auth_token=""):
             last_error = f"{bucket}: {exc}"
     if not uploaded:
         raise FirebaseError(f"อัปโหลดรูปไป Firebase Storage ไม่สำเร็จ กรุณาตรวจ Bucket และ Storage Rules: {last_error}")
-    bucket = next((b for b in buckets if b in str(uploaded.get("bucket", "")) or b == FIREBASE_STORAGE_BUCKET), buckets[0])
+    returned_bucket = normalize_storage_bucket(uploaded.get("bucket", ""))
+    bucket = next((b for b in buckets if b == returned_bucket), buckets[0])
     encoded_name = urllib.parse.quote(uploaded.get("name", f"menu-images/{output_name}"), safe="")
     token = (uploaded.get("downloadTokens") or "").split(",")[0]
     download = f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encoded_name}?alt=media"
@@ -343,12 +352,12 @@ def expire_overdue_reservations():
     reservations = get("reservations") or {}
     if not isinstance(reservations, dict):
         return
-    now = datetime.now()
+    now = restaurant_now()
     for res in reservations.values():
         if not isinstance(res, dict) or res.get("status") not in {"waiting", "confirmed"}:
             continue
         try:
-            when = parse_reservation_dt(res.get("datetime"))
+            when = parse_reservation_record_dt(res)
         except ValueError:
             continue
         if now <= when + timedelta(minutes=15):
@@ -408,6 +417,7 @@ def public_menu_list():
         if not isinstance(value, dict):
             continue
         item = dict(value)
+        item["image_url"] = normalize_storage_image_url(item.get("image_url", ""))
         if item.get("category") in legacy_food:
             item["category"] = "อาหาร"
         result.append(item)
@@ -461,7 +471,9 @@ class handler(BaseHTTPRequestHandler):
             if path == "/api/payment-settings":
                 require_role(profile, "admin", "staff")
                 settings = get("payment_settings") or {}
-                return response(self, 200, {"ok": True, "settings": {**DEFAULT_PAYMENT_SETTINGS, **settings}})
+                settings = {**DEFAULT_PAYMENT_SETTINGS, **settings}
+                settings["qr_image_url"] = normalize_storage_image_url(settings.get("qr_image_url", ""))
+                return response(self, 200, {"ok": True, "settings": settings})
 
             if path == "/api/me":
                 return response(self, 200, {"ok": True, "user": profile})
@@ -517,6 +529,17 @@ class handler(BaseHTTPRequestHandler):
                 expire_overdue_reservations()
                 reservations = get("reservations") or {}
                 values = list(reservations.values()) if isinstance(reservations, dict) else []
+                normalized_values = []
+                for reservation in values:
+                    if not isinstance(reservation, dict):
+                        continue
+                    item = dict(reservation)
+                    try:
+                        item["datetime"] = parse_reservation_record_dt(item).isoformat(timespec="minutes")
+                    except ValueError:
+                        pass
+                    normalized_values.append(item)
+                values = normalized_values
                 if profile.get("role") == "customer":
                     values = [r for r in values if r.get("customer_id") == profile.get("id")]
                 return response(self, 200, {"ok": True, "reservations": values})
@@ -1116,11 +1139,12 @@ class handler(BaseHTTPRequestHandler):
                     when = parse_reservation_dt(when_text)
                 except ValueError:
                     raise ValueError("กรุณาระบุเวลาในรูปแบบ HH:MM")
-                if when.date() != datetime.now().date():
+                current_restaurant_time = restaurant_now()
+                if when.date() != current_restaurant_time.date():
                     raise ValueError("ระบบรับจองเฉพาะวันนี้เท่านั้น")
                 if when.hour < 9:
                     raise ValueError("ระบบเปิดให้จองตั้งแต่ 09:00 เป็นต้นไป")
-                minimum_time = datetime.now() + timedelta(minutes=30)
+                minimum_time = current_restaurant_time + timedelta(minutes=30)
                 if when < minimum_time:
                     raise ValueError("กรุณาจองล่วงหน้าอย่างน้อย 30 นาที")
                 table_for_reservation = find_table_by_number(table_number)
@@ -1141,7 +1165,7 @@ class handler(BaseHTTPRequestHandler):
                     raise ValueError(f"โต๊ะ {table_number} ถูกจองไว้แล้วในช่วงเวลาใกล้เคียง ({clash.get('datetime')}) กรุณาเลือกเวลาหรือโต๊ะอื่น")
                 reservation = {
                     "id": new_id("res"), "customer_id": None if by_staff else profile["id"], "customer_name": name,
-                    "phone": phone, "table_number": table_number, "party_size": party_size, "datetime": when_text,
+                    "phone": phone, "table_number": table_number, "party_size": party_size, "datetime": when.isoformat(timespec="minutes"),
                     # A booking taken by staff (phone / walk-in) is confirmed immediately
                     "status": "confirmed" if by_staff else "waiting",
                     "source": "staff" if by_staff else "customer",
@@ -1174,7 +1198,7 @@ class handler(BaseHTTPRequestHandler):
                     "bank_name": clean_text(data.get("bank_name", ""), "ชื่อธนาคาร", 120),
                     "account_name": clean_text(data.get("account_name", ""), "ชื่อบัญชี", 120),
                     "account_number": clean_text(data.get("account_number", ""), "เลขบัญชี", 80),
-                    "qr_image_url": str(data.get("qr_image_url", ""))[:1000],
+                    "qr_image_url": normalize_storage_image_url(str(data.get("qr_image_url", ""))[:1000]),
                     "updated_at": now_iso(),
                 }
                 put("payment_settings", settings)

@@ -330,12 +330,25 @@ const App = (() => {
     if(!table)return; if(!Number.isInteger(partySize)||partySize<1||partySize>Number(table.capacity||4))return toast(`จำนวนคนต้องอยู่ระหว่าง 1-${Number(table.capacity||4)} คน`);
     try{const d=await api("/api/customer/tables/confirm",{method:"POST",body:JSON.stringify({table_id:table.id,party_size:partySize})});state.pendingTable=null;state.selectedTable=d.table;state.tableVerified=true;localStorage.setItem(tableKey(),JSON.stringify(state.selectedTable));startPresence();closeModal();refreshNav();toast(`เลือกโต๊ะ ${d.table.table_number} สำหรับ ${partySize} คนแล้ว`);go("menu")}catch(e){toast(e.message)}
   }
-  function reservationMinimumValue(){ const d=new Date(Date.now()+30*60*1000); const pad=n=>String(n).padStart(2,"0"); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
-  function setReservationMinimum(){ const input=$("res-date"); if(input){input.min=reservationMinimumValue(); input.title="ต้องจองล่วงหน้าอย่างน้อย 30 นาที";} }
+  function bangkokDateParts(date=new Date()){
+    const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Bangkok",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(date);
+    return Object.fromEntries(parts.filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
+  }
+  function bangkokDateKey(date=new Date()){const p=bangkokDateParts(date);return `${p.year}-${p.month}-${p.day}`;}
+  function reservationMinimumInstant(){return new Date(Math.ceil((Date.now()+30*60*1000)/60000)*60000);}
+  function reservationMinimumValue(){const p=bangkokDateParts(reservationMinimumInstant());return `${p.hour}:${p.minute}`;}
+  function isReservationTimeValid(value){
+    const match=/^(?:[01]\d|2[0-3]):[0-5]\d$/.exec(String(value||"")); if(!match)return false;
+    const minimum=reservationMinimumInstant(), nowKey=bangkokDateKey(), minimumParts=bangkokDateParts(minimum);
+    if(nowKey!==`${minimumParts.year}-${minimumParts.month}-${minimumParts.day}`)return false;
+    const [hour,minute]=value.split(":").map(Number);
+    return hour*60+minute>=Number(minimumParts.hour)*60+Number(minimumParts.minute);
+  }
+  function setReservationMinimum(inputId="res-date"){const input=$(inputId);if(input){input.min=reservationMinimumValue();input.title="ใช้เวลาไทย (Asia/Bangkok) และต้องจองล่วงหน้าอย่างน้อย 30 นาที";}}
   async function reserve(event) {
     event.preventDefault();
     if (!state.user) return go("login");
-    if ($("res-date")?.value) { const [h,m]=$("res-date").value.split(":").map(Number); const selected=new Date(); selected.setHours(h,m,0,0); if(selected.getTime() < Date.now()+30*60*1000) return toast("กรุณาจองล่วงหน้าอย่างน้อย 30 นาที"); }
+    if ($("res-date")?.value && !isReservationTimeValid($("res-date").value)) return toast("กรุณาเลือกเวลาจองตามเวลาไทย และจองล่วงหน้าอย่างน้อย 30 นาที");
     try {
       const data = await api("/api/reservations",{method:"POST",body:JSON.stringify({
         customer_name:$("res-name").value, phone:$("res-phone").value,
@@ -353,7 +366,7 @@ const App = (() => {
     if (!state.user || state.user.role !== "customer") return;
     try {
       const data = await api("/api/reservations");
-      const today = new Date().toISOString().slice(0,10);
+      const today = bangkokDateKey();
       const list = data.reservations.filter(r=>String(r.datetime||"").slice(0,10)===today).sort((a, b) => String(a.datetime).localeCompare(String(b.datetime)));
       $("my-reservations").innerHTML = `<h3>ปฏิทินการจองของฉันวันนี้</h3>` + (list.map(r=>`<div class="table-row"><div><b>${escapeHtml(String(r.datetime).slice(11,16))} · โต๊ะ ${escapeHtml(r.table_number)}</b><div class="small">${escapeHtml(r.customer_name)} · ${escapeHtml(r.phone||"")}</div></div>${resBadge(r.status)}</div>`).join("") || `<p class="small">วันนี้ยังไม่มีรายการจอง</p>`);
     } catch(e) { toast(e.message); }
@@ -462,10 +475,12 @@ const App = (() => {
     } catch(e) { return toast(e.message); }
     const tables = staffState.tables.slice().sort((a, b) => String(a.table_number).localeCompare(String(b.table_number), undefined, {numeric: true}));
     openModal(`<h2>จองโต๊ะให้ลูกค้า</h2><form onsubmit="App.saveStaffReserve(event)"><label>ชื่อลูกค้า<input id="sr-name" required></label><label>เบอร์โทร<input id="sr-phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" minlength="10" required></label><label>จำนวนคน<input id="sr-party-size" type="number" min="1" required></label><label>โต๊ะ<select id="sr-table">${tables.map(t => `<option value="${escapeAttr(t.table_number)}">โต๊ะ ${escapeHtml(t.table_number)}</option>`).join("")}</select></label><label>เวลา<input id="sr-date" type="time" required></label><div class="actions"><button class="primary">บันทึกการจอง</button><button type="button" class="secondary" onclick="App.closeModal()">Cancel</button></div></form>`);
+    setReservationMinimum("sr-date");
   }
 
   async function saveStaffReserve(e) {
     e.preventDefault();
+    if ($("sr-date")?.value && !isReservationTimeValid($("sr-date").value)) return toast("กรุณาเลือกเวลาจองตามเวลาไทย และจองล่วงหน้าอย่างน้อย 30 นาที");
     try {
       await api("/api/reservations", {method: "POST", body: JSON.stringify({customer_name: $("sr-name").value, phone: $("sr-phone").value, party_size: Number($("sr-party-size").value), table_number: $("sr-table").value, datetime: $("sr-date").value})});
       closeModal(); toast("บันทึกการจองสำเร็จ"); loadStaff();

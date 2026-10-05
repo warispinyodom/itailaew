@@ -1,9 +1,38 @@
 from datetime import datetime, timezone, timedelta
 import re
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 try:
     from .config import VAT_RATE, SERVICE_CHARGE_RATE, RESERVATION_SLOT_MINUTES
 except ImportError:
     from config import VAT_RATE, SERVICE_CHARGE_RATE, RESERVATION_SLOT_MINUTES
+
+# The restaurant uses Thai-language booking forms and prices in Thai baht.
+# Keep reservation wall-clock times in Bangkok (UTC+7), independent of the
+# hosting platform's timezone (Vercel workers commonly run in UTC).
+RESTAURANT_TIMEZONE = timezone(timedelta(hours=7), "Asia/Bangkok")
+
+def restaurant_now():
+    return datetime.now(RESTAURANT_TIMEZONE)
+
+def normalize_storage_image_url(value):
+    """Remove an accidental gs:// prefix from Firebase Storage bucket URLs."""
+    url = str(value or "").strip()
+    parts = urlsplit(url)
+    if parts.netloc.lower() != "firebasestorage.googleapis.com":
+        return url
+    prefix = "/v0/b/"
+    if not parts.path.startswith(prefix):
+        return url
+    bucket_and_object = parts.path[len(prefix):]
+    bucket, separator, object_name = bucket_and_object.partition("/o/")
+    bucket = unquote(bucket)
+    if not separator or not bucket.lower().startswith("gs://"):
+        return url
+    bucket = bucket[5:].strip("/")
+    if not bucket:
+        return url
+    path = f"{prefix}{quote(bucket, safe='.-_')}/o/{object_name}"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -148,7 +177,7 @@ def validate_menu_payload(data):
     name = validate_person_name(name, "ชื่อเมนู")
     price = to_positive_number(data.get("price"), "ราคา")
     options = normalize_options(data.get("options"))
-    image_url = str(data.get("image_url", "")).strip()
+    image_url = normalize_storage_image_url(data.get("image_url", ""))
     # The Admin form uploads a local file first; the API then stores only the
     # resulting Firebase Storage reference. Do not accept pasted image URLs or
     # base64 data URLs as menu images.
@@ -165,20 +194,42 @@ def validate_menu_payload(data):
 ACTIVE_RESERVATION_STATUSES = {"waiting", "confirmed", "seated"}
 
 
-def parse_reservation_dt(value):
-    """Parse today's reservation time in 24-hour or common 12-hour formats."""
+def parse_reservation_dt(value, booking_date=None):
+    """Parse a reservation datetime or a clock time on its Bangkok booking date."""
     text = str(value).strip() if value is not None else ""
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=RESTAURANT_TIMEZONE)
+        return parsed.astimezone(RESTAURANT_TIMEZONE)
     except (ValueError, TypeError):
         pass
     normalized = " ".join(text.replace(".", ":").split()).upper()
     for pattern in ("%H:%M", "%I:%M%p", "%I:%M %p"):
         try:
-            return datetime.combine(datetime.now().date(), datetime.strptime(normalized, pattern).time())
+            return datetime.combine(booking_date or restaurant_now().date(), datetime.strptime(normalized, pattern).time(), tzinfo=RESTAURANT_TIMEZONE)
         except ValueError:
             continue
     raise ValueError("รูปแบบเวลาไม่ถูกต้อง")
+
+def parse_reservation_record_dt(reservation):
+    """Parse a stored reservation, recovering legacy HH:MM dates from created_at."""
+    value = reservation.get("datetime")
+    text = str(value or "").strip()
+    booking_date = None
+    if not re.match(r"^\d{4}-\d{2}-\d{2}(?:[T ]|$)", text):
+        created_at = reservation.get("created_at")
+        if created_at:
+            try:
+                created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=RESTAURANT_TIMEZONE)
+                else:
+                    created = created.astimezone(RESTAURANT_TIMEZONE)
+                booking_date = created.date()
+            except (TypeError, ValueError):
+                pass
+    return parse_reservation_dt(value, booking_date=booking_date)
 
 def find_reservation_conflict(reservations, table_number, when, ignore_id=None, slot_minutes=90):
     """Return the existing active reservation that overlaps `when` for the same table, or None."""
@@ -191,7 +242,7 @@ def find_reservation_conflict(reservations, table_number, when, ignore_id=None, 
         if res.get("status", "waiting") not in ACTIVE_RESERVATION_STATUSES:
             continue
         try:
-            other = parse_reservation_dt(res.get("datetime"))
+            other = parse_reservation_record_dt(res)
         except ValueError:
             continue
         if abs(other - when) < window:

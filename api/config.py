@@ -4,7 +4,7 @@ RESTAURANT_NAME = "itailaew"
 RESTAURANT_TAGLINE = "Italian Restaurant & Café"
 VAT_RATE = 0.07
 SERVICE_CHARGE_RATE = 0.10
-POLL_INTERVAL_SECONDS = 1
+POLL_INTERVAL_SECONDS = 0.10
 # Two reservations for the same table closer than this many minutes are treated as a double booking
 RESERVATION_SLOT_MINUTES = 90
 
