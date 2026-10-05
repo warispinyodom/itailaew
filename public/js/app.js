@@ -45,10 +45,10 @@ const App = (() => {
     if (id === "menu") loadMenus();
     if (id === "cart") { renderCart(); }
     if (id === "reservation") { setReservationMinimum(); loadReservations(); }
-    if (id === "customer") { loadCustomer(); state.polling = setInterval(loadCustomer, 30000); }
+    if (id === "customer") { loadCustomer(); state.polling = setInterval(loadCustomer, 10000); }
     if (id === "admin") loadDashboard();
-    if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 30000); }
-    if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 30000); }
+    if (id === "staff") { loadStaff(); state.polling = setInterval(loadStaff, 10000); }
+    if (id === "tables") { loadTables(); state.polling = setInterval(loadTables, 10000); }
     if (id === "pos") loadPos();
     window.scrollTo({top:0,behavior:"smooth"});
   }
@@ -183,13 +183,13 @@ const App = (() => {
       $(target)?.classList.add("active");
       localStorage.setItem("itailaew_current_page", target);
       if (target === "admin") loadDashboard();
-      if (target === "staff") { loadStaff(); if (!state.polling) state.polling = setInterval(loadStaff, 30000); }
+      if (target === "staff") { loadStaff(); if (!state.polling) state.polling = setInterval(loadStaff, 10000); }
       if (target === "table-select") loadCustomerTables();
       if (target === "menu") loadMenus();
       if (target === "reservation") { setReservationMinimum(); loadReservations(); }
-      if (target === "customer") { loadCustomer(); if (!state.polling) state.polling = setInterval(loadCustomer, 30000); }
+      if (target === "customer") { loadCustomer(); if (!state.polling) state.polling = setInterval(loadCustomer, 10000); }
       if (target === "cart") renderCart();
-      if (target === "tables") { loadTables(); if (!state.polling) state.polling = setInterval(loadTables, 30000); }
+      if (target === "tables") { loadTables(); if (!state.polling) state.polling = setInterval(loadTables, 10000); }
       if (target === "pos") loadPos();
     } catch (_) {
       // Do not destroy a valid local identity because a secondary page/data
@@ -432,6 +432,19 @@ const App = (() => {
       closeModal(); toast("บันทึกการจองสำเร็จ"); loadStaff();
     } catch(x) { toast(x.message); }
   }
+  function showStaffMove(id) {
+    const source = staffState.tables.find(t => t.id === id);
+    const free = staffState.tables.filter(t => t.status === "available" && t.id !== id);
+    if (!source) return toast("ไม่พบโต๊ะต้นทาง");
+    if (!source.current_order_id) return toast("โต๊ะนี้ยังไม่มีออเดอร์ให้ย้าย");
+    if (!free.length) return toast("ไม่มีโต๊ะว่างให้ย้าย");
+    openModal(`<h2>ย้ายโต๊ะ ${escapeHtml(source.table_number)}</h2><p class="small">Staff สามารถย้ายบิลเดิมพร้อมสมาชิกไปโต๊ะปลายทางได้ทันที</p><form onsubmit="App.doStaffMove(event,'${escapeAttr(id)}')"><label>โต๊ะปลายทาง<select id="staff-mv-to">${tableOptions(free)}</select></label><div class="actions"><button class="primary">ยืนยันย้ายโต๊ะ</button><button type="button" class="secondary" onclick="App.closeModal()">ยกเลิก</button></div></form>`);
+  }
+  async function doStaffMove(e, id) {
+    e.preventDefault();
+    try { await api("/api/tables/move", {method:"POST", body:JSON.stringify({old_table_id:id, new_table_id:$("staff-mv-to").value})}); closeModal(); toast("Staff ย้ายโต๊ะสำเร็จ"); loadStaff(); }
+    catch(x) { toast(x.message); }
+  }
 
   // ---------- Staff: Counter order (order on behalf of the customer) ----------
   const pos = { menus: [], cart: {}, tables: [] };
@@ -590,7 +603,7 @@ const App = (() => {
   async function loadStaff() {
     try {
       const [t,k,r,o,m,n] = await Promise.all([api("/api/tables"),api("/api/kitchen"),api("/api/reservations"),api("/api/orders"),api("/api/table-move-requests"),api("/api/notifications")]);
-      $("tables-list").innerHTML = t.tables.map(x=>`<div class="table-row"><div><b>โต๊ะ ${escapeHtml(x.table_number)}</b></div><span class="badge ${x.status}">${escapeHtml(x.status)}</span></div>`).join("");
+      $("tables-list").innerHTML = t.tables.map(x=>`<div class="table-row"><div><b>โต๊ะ ${escapeHtml(x.table_number)}</b><div class="small">${x.current_order_id?"มีออเดอร์ปัจจุบัน":"ไม่มีออเดอร์"}</div></div><div class="row-actions"><span class="badge ${x.status}">${escapeHtml(x.status)}</span>${x.current_order_id?`<button class="secondary" onclick="App.showStaffMove('${escapeAttr(x.id)}')">ย้ายโต๊ะ</button>`:""}</div></div>`).join("");
       const kitchenItems = k.items.slice().sort((a,b) => {
         const rank = x => x.status === "done" ? 1 : 0;
         const rankDiff = rank(a) - rank(b);
@@ -600,7 +613,7 @@ const App = (() => {
         return String(timeA).localeCompare(String(timeB));
       });
       const groups = kitchenItems.reduce((acc,x)=>{(acc[x.order_id] ||= []).push(x);return acc;},{});
-      $("kitchen-list").innerHTML = Object.entries(groups).map(([orderId,items])=>`<section class="kitchen-bill"><div class="kitchen-bill-head"><b>บิล ${escapeHtml(orderId)} · โต๊ะ ${escapeHtml(items[0].table_number||"-")}</b><span class="small">${escapeHtml(items[0].timestamp||"")}</span></div>${items.map(x=>`<div class="table-row"><div><b>${escapeHtml(x.menu_name)}</b><div class="small">× ${x.quantity}</div></div><select onchange="App.updateKitchen('${x.id}',this.value)"><option ${x.status==="pending"?"selected":""}>pending</option><option ${x.status==="cooking"?"selected":""}>cooking</option><option ${x.status==="done"?"selected":""}>done</option></select></div>`).join("")}</section>`).join("") || `<p class="small">ยังไม่มีออเดอร์เข้าครัว</p>`;
+      $("kitchen-list").innerHTML = Object.entries(groups).map(([orderId,items])=>{const moved=items.find(x=>x.move_label);const moveText=moved?`<div class="small" style="color:var(--wine);font-weight:700">${escapeHtml(moved.move_label)}</div>`:"";return `<section class="kitchen-bill"><div class="kitchen-bill-head"><div><b>บิล ${escapeHtml(orderId)} · โต๊ะ ${escapeHtml(items[0].table_number||"-")}</b>${moveText}</div><span class="small">${escapeHtml(items[0].timestamp||"")}</span></div>${items.map(x=>`<div class="table-row"><div><b>${escapeHtml(x.menu_name)}</b><div class="small">× ${x.quantity}</div></div><select onchange="App.updateKitchen('${x.id}',this.value)"><option ${x.status==="pending"?"selected":""}>pending</option><option ${x.status==="cooking"?"selected":""}>cooking</option><option ${x.status==="done"?"selected":""}>done</option></select></div>`).join("")}</section>`}).join("") || `<p class="small">ยังไม่มีออเดอร์เข้าครัว</p>`;
       $("staff-notifications").innerHTML = `<h3>การแจ้งเตือน</h3>` + ((n.notifications||[]).map(x=>`<div class="table-row"><div><b>${escapeHtml(x.title||"")}</b><div class="small">${escapeHtml(x.detail||"")}</div></div><span class="small">${escapeHtml(String(x.created_at||"").slice(11,19))}</span></div>`).join("") || `<p class="small">ไม่มีการแจ้งเตือน</p>`);
       staffState.tables = t.tables; renderStaffReservations(r.reservations); renderMoveRequests(m.requests);
       $("staff-orders").innerHTML = o.orders.slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).map(x => {
@@ -667,5 +680,5 @@ const App = (() => {
   function escapeAttr(v){return escapeHtml(v)}
 
   restore();
-  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,savePaymentSettings,closeModal,quickOrder};
+  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,showStaffMove,doStaffMove,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,savePaymentSettings,closeModal,quickOrder};
 })();
