@@ -152,8 +152,9 @@ const App = (() => {
             const moved = tables.tables.find(t => t.id === completed.new_table_id && t.claimed_by === state.user.id);
             if (moved) { state.selectedTable = moved; localStorage.setItem(tableKey(), JSON.stringify(moved)); }
           }
-          const live = tables.tables.find(t => t.id === state.selectedTable?.id);
-          if (!live || !tableHasCurrentUser(live)) clearCustomerSessionData();
+          let live = tables.tables.find(t => t.id === state.selectedTable?.id);
+          if (!live || !tableHasCurrentUser(live)) live = adoptMovedCustomerTable(tables.tables);
+          if (!live) { state.tableVerified = false; state.selectedTable = null; }
           else { state.selectedTable = live; state.tableVerified = true; startPresence(); }
         } catch (_) { state.selectedTable=null; state.tableVerified=false; }
       }
@@ -240,6 +241,11 @@ const App = (() => {
     const mine=d.tables.find(t=>tableHasCurrentUser(t));
     if(mine){state.selectedTable=mine;state.tableVerified=true;localStorage.setItem(tableKey(),JSON.stringify(mine));startPresence();refreshNav();}
     else {state.selectedTable=null;state.tableVerified=false;localStorage.removeItem(tableKey());stopPresence();refreshNav();}
+    return mine||null;
+  }
+  function adoptMovedCustomerTable(tables){
+    const mine=(tables||[]).find(t=>tableHasCurrentUser(t));
+    if(mine){state.selectedTable=mine;state.tableVerified=true;localStorage.setItem(tableKey(),JSON.stringify(mine));startPresence();refreshNav();}
     return mine||null;
   }
   function clearSelectedTable(){ state.selectedTable=null; state.tableVerified=false; stopPresence(); if(state.user)localStorage.removeItem(tableKey()); refreshNav(); }
@@ -331,9 +337,9 @@ const App = (() => {
     return html || `<p class="small">ยังไม่มีออเดอร์</p>`;
   }
   async function loadCustomer(){
-    if(!state.user)return; $("customer-name").textContent=state.user.name; $("customer-points").textContent=state.user.member_points||0; renderCart();
+    if(!state.user)return; try{const fresh=await api("/api/me");if(fresh.user){state.user=fresh.user;localStorage.setItem("itailaew_user",JSON.stringify(state.user));}}catch(_){} $("customer-name").textContent=state.user.name; $("customer-points").textContent=state.user.member_points||0; renderCart();
     try{
-      const selected=selectedTable(); if(selected){const moves=await api("/api/customer/table-move-requests");const td=await api("/api/customer/tables");const completed=moves.requests.find(r=>r.status==="completed");if(completed){const moved=td.tables.find(t=>t.id===completed.new_table_id&&t.claimed_by===state.user.id);if(moved){state.selectedTable=moved;localStorage.setItem(tableKey(),JSON.stringify(moved));}}const live=td.tables.find(t=>t.id===state.selectedTable?.id);if(!live||live.status==="available"||!tableHasCurrentUser(live)){const had=state.hadActiveOrder;clearCustomerSessionData();state.hasActiveOrder=false;if(had){toast("บิลปิดแล้ว โต๊ะกลับมาว่าง");go("home");return;}return;}}
+      let selected=selectedTable(); if(selected){const moves=await api("/api/customer/table-move-requests");const td=await api("/api/customer/tables");const completed=moves.requests.find(r=>r.status==="completed");if(completed){const moved=td.tables.find(t=>t.id===completed.new_table_id&&tableHasCurrentUser(t));if(moved){state.selectedTable=moved;localStorage.setItem(tableKey(),JSON.stringify(moved));}}let live=td.tables.find(t=>t.id===state.selectedTable?.id);if(!live||!tableHasCurrentUser(live)) live=adoptMovedCustomerTable(td.tables);if(!live){state.tableVerified=false;state.selectedTable=null;stopPresence();refreshNav();return;}state.selectedTable=live;state.tableVerified=true;selected=live;startPresence();}
       const d=await api(`/api/orders?table_id=${encodeURIComponent(selectedTable()?.id || "")}`); const active=d.orders.filter(o=>!['closed','merged','cancelled'].includes(o.status)); state.hadActiveOrder=state.hasActiveOrder||active.length>0; state.hasActiveOrder=active.length>0; refreshNav();
       $("customer-orders").innerHTML=`<h3>รายการอาหารที่สั่ง</h3>`+renderCustomerOrders(d.orders);
       if(active.length) $("customer-orders").insertAdjacentHTML("beforeend",`<div class="actions"><button class="primary" onclick="App.go('menu')">สั่งเมนูใหม่</button><button class="secondary" onclick="App.requestSplitBill()">ขอแยกบิล</button></div>`);
@@ -476,13 +482,15 @@ const App = (() => {
       const o = d.order;
       const ps=paymentData.settings||{};
       const paymentOptions=[ps.cash_enabled?`<option value="cash">เงินสด</option>`:"",ps.bank_enabled?`<option value="bank">โอนผ่านบัญชีธนาคาร${ps.bank_name?` · ${escapeHtml(ps.bank_name)}`:""}</option>`:"",ps.qr_enabled?`<option value="qr">QR</option>`:""].join("");
-      const paymentInfo=(ps.bank_name||ps.account_name||ps.account_number||ps.qr_image_url)?`<div class="small" style="margin-top:8px">${ps.bank_name?`ธนาคาร: ${escapeHtml(ps.bank_name)}<br>`:""}${ps.account_name?`ชื่อบัญชี: ${escapeHtml(ps.account_name)}<br>`:""}${ps.account_number?`เลขบัญชี: ${escapeHtml(ps.account_number)}<br>`:""}${ps.qr_image_url?`<img src="${escapeAttr(ps.qr_image_url)}" alt="QR Code" style="max-width:180px;max-height:180px;margin-top:8px;object-fit:contain">`:""}</div>`:"";
+      const paymentInfo=(ps.bank_name||ps.account_name||ps.account_number||ps.qr_image_url)?`<div id="payment-method-info" class="small hidden" style="margin-top:8px">${ps.bank_name?`ธนาคาร: ${escapeHtml(ps.bank_name)}<br>`:""}${ps.account_name?`ชื่อบัญชี: ${escapeHtml(ps.account_name)}<br>`:""}${ps.account_number?`เลขบัญชี: ${escapeHtml(ps.account_number)}<br>`:""}${ps.qr_image_url?`<img src="${escapeAttr(ps.qr_image_url)}" alt="QR Code" style="max-width:180px;max-height:180px;margin-top:8px;object-fit:contain"><button type="button" class="secondary" style="display:block;margin-top:8px" onclick="App.hidePaymentQR()">ปิด QR</button>`:""}</div>`:"";
       const rows = (o.items || []).map(it => `<div class="table-row" style="padding:7px 0"><span>${escapeHtml(it.name)} × ${it.quantity}</span><span>฿${(Number(it.unit_price) * Number(it.quantity)).toFixed(2)}</span></div>`).join("");
       if(!paymentOptions) throw new Error("Admin ยังไม่ได้เปิดวิธีชำระเงิน");
-      openModal(`<h2>เช็คบิล โต๊ะ ${escapeHtml(o.table_number || "-")}</h2>${rows}<label>ส่วนลด (บาท)<input id="co-discount" type="number" min="0" step="0.01" value="0" oninput="App.previewBill('${orderId}')"></label><label>วิธีชำระเงิน<select id="co-payment-method">${paymentOptions}</select>${paymentInfo}</label><div id="co-summary">${billRows(d.bill)}</div><div class="actions"><button class="primary" onclick="App.doCheckout('${orderId}')">ยืนยันเช็คบิล</button><button type="button" class="secondary" onclick="App.closeModal()">Cancel</button></div>`);
+      openModal(`<h2>เช็คบิล โต๊ะ ${escapeHtml(o.table_number || "-")}</h2>${rows}<label>ส่วนลด (บาท)<input id="co-discount" type="number" min="0" step="0.01" value="0" oninput="App.previewBill('${orderId}')"></label><label>วิธีชำระเงิน<select id="co-payment-method" onchange="App.togglePaymentInfo(this.value)">${paymentOptions}</select>${paymentInfo}</label><div id="co-summary">${billRows(d.bill)}</div><div class="actions"><button class="primary" onclick="App.doCheckout('${orderId}')">ยืนยันเช็คบิล</button><button type="button" class="secondary" onclick="App.closeModal()">Cancel</button></div>`);
     } catch(e) { toast(e.message); }
   }
 
+  function togglePaymentInfo(method){const el=$("payment-method-info");if(el)el.classList.toggle("hidden",method!=="qr");}
+  function hidePaymentQR(){const el=$("payment-method-info");if(el)el.classList.add("hidden");}
   function previewBill(orderId) {
     clearTimeout(billTimer);
     billTimer = setTimeout(async () => {
@@ -648,7 +656,7 @@ const App = (() => {
     if(type==="payments") {
       try {
         const d=await api("/api/payment-settings"); const s=d.settings||{};
-        c.innerHTML=`<div class="list-card"><h3>Payment Settings</h3><p class="small">Admin กำหนดวิธีชำระเงินที่ Staff เลือกตอนปิดบิลได้</p><form onsubmit="App.savePaymentSettings(event)"><label><input id="pay-cash" type="checkbox" ${s.cash_enabled?"checked":""}> เปิดรับเงินสด</label><label><input id="pay-bank" type="checkbox" ${s.bank_enabled?"checked":""}> เปิดรับโอนผ่านบัญชีธนาคาร</label><label><input id="pay-qr" type="checkbox" ${s.qr_enabled?"checked":""}> เปิดรับ QR</label><label>ชื่อธนาคาร<input id="pay-bank-name" value="${escapeAttr(s.bank_name||"")}"></label><label>ชื่อบัญชี<input id="pay-account-name" value="${escapeAttr(s.account_name||"")}"></label><label>เลขบัญชี<input id="pay-account-number" value="${escapeAttr(s.account_number||"")}"></label><label>ลิงก์รูป QR Code<input id="pay-qr-url" value="${escapeAttr(s.qr_image_url||"")}" placeholder="URL รูป QR จาก Firebase Storage"></label><div class="actions"><button class="primary">บันทึก Payment Settings</button></div></form></div>`;
+        c.innerHTML=`<div class="list-card"><h3>Payment Settings</h3><p class="small">Admin กำหนดวิธีชำระเงินที่ Staff เลือกตอนปิดบิลได้</p><form onsubmit="App.savePaymentSettings(event)"><label><input id="pay-cash" type="checkbox" ${s.cash_enabled?"checked":""}> เปิดรับเงินสด</label><label><input id="pay-bank" type="checkbox" ${s.bank_enabled?"checked":""}> เปิดรับโอนผ่านบัญชีธนาคาร</label><label><input id="pay-qr" type="checkbox" ${s.qr_enabled?"checked":""}> เปิดรับ QR</label><label>ชื่อธนาคาร<input id="pay-bank-name" value="${escapeAttr(s.bank_name||"")}"></label><label>ชื่อบัญชี<input id="pay-account-name" value="${escapeAttr(s.account_name||"")}"></label><label>เลขบัญชี<input id="pay-account-number" value="${escapeAttr(s.account_number||"")}"></label><label>อัปโหลดรูป QR Code<input id="pay-qr-file" type="file" accept="image/png,image/jpeg,image/webp"><input id="pay-qr-url" type="hidden" value="${escapeAttr(s.qr_image_url||"")}"><span class="small">ไฟล์จะถูกเก็บใน Firebase Storage</span></label><div class="actions"><button class="primary">บันทึก Payment Settings</button></div></form></div>`;
       }catch(e){toast(e.message)}
     }
     if(type==="logs") {
@@ -658,7 +666,7 @@ const App = (() => {
       }catch(e){toast(e.message)}
     }
   }
-  async function savePaymentSettings(e){e.preventDefault();try{await api("/api/payment-settings",{method:"PATCH",body:JSON.stringify({cash_enabled:$('pay-cash').checked,bank_enabled:$('pay-bank').checked,qr_enabled:$('pay-qr').checked,bank_name:$('pay-bank-name').value,account_name:$('pay-account-name').value,account_number:$('pay-account-number').value,qr_image_url:$('pay-qr-url').value})});toast("บันทึกวิธีชำระเงินแล้ว");adminPage("payments")}catch(x){toast(x.message)}}
+  async function savePaymentSettings(e){e.preventDefault();try{let qrUrl=$("pay-qr-url").value;const file=$("pay-qr-file")?.files?.[0];if(file){if(file.size>2_000_000)throw new Error("ไฟล์ QR ต้องมีขนาดไม่เกิน 2 MB");const imageData=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error("อ่านไฟล์ QR ไม่สำเร็จ"));reader.readAsDataURL(file)});const uploaded=await api("/api/uploads/menu-image",{method:"POST",body:JSON.stringify({filename:`payment-qr-${file.name}`,image_data:imageData})});qrUrl=uploaded.image_url;}await api("/api/payment-settings",{method:"PATCH",body:JSON.stringify({cash_enabled:$("pay-cash").checked,bank_enabled:$("pay-bank").checked,qr_enabled:$("pay-qr").checked,bank_name:$("pay-bank-name").value,account_name:$("pay-account-name").value,account_number:$("pay-account-number").value,qr_image_url:qrUrl})});toast("บันทึกวิธีชำระเงินแล้ว");adminPage("payments")}catch(x){toast(x.message)}}
 
   function optionRows(options){
     return Object.entries(options||{}).map(([group,values])=>`<div class="option-group" data-group="${escapeAttr(group)}"><div class="table-row"><input class="option-group-name" value="${escapeAttr(group)}" placeholder="ชื่อกลุ่ม เช่น ขนาด"><button type="button" class="secondary" onclick="this.closest('.option-group').remove()">ลบกลุ่ม</button></div><div class="option-values">${(Array.isArray(values)?values:[]).map(v=>{const name=typeof v==="object"?v.name:v;const price=typeof v==="object"?v.price:0;return `<div class="option-value"><input class="option-value-name" value="${escapeAttr(name)}" placeholder="ค่าตัวเลือก"><input class="option-value-price" type="number" min="0" step="0.01" value="${Number(price||0)}" placeholder="ราคาเพิ่ม"><button type="button" class="secondary" onclick="this.parentElement.remove()">ลบ</button></div>`}).join("")}</div><button type="button" class="secondary" onclick="App.addOptionValue(this)">+ เพิ่มค่าตัวเลือก</button></div>`).join("");
@@ -680,5 +688,5 @@ const App = (() => {
   function escapeAttr(v){return escapeHtml(v)}
 
   restore();
-  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,showStaffMove,doStaffMove,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,savePaymentSettings,closeModal,quickOrder};
+  return {go,authMode,submitAuth,logout,loadMenus,reserve,loadReservations,loadCustomer,requestMoveTable,submitMoveRequest,requestSplitBill,saveSplitOwners,updateMoveRequest,loadDashboard,cartAdd,clearCart,submitCart,requestBill,callStaff,loadCustomerTables,claimTable,confirmPartySize,cancelPartySize,addConfiguredToCart,loadStaff,loadTables,showCheckout,previewBill,doCheckout,splitByCustomer,resAction,showStaffReserve,saveStaffReserve,showStaffMove,doStaffMove,togglePaymentInfo,hidePaymentQR,loadPos,renderPos,posChoose,posAddConfigured,posAdd,posClear,posSubmit,setTableStatus,setTableCapacity,showMove,doMove,showMerge,doMerge,showSplit,doSplit,updateKitchen,adminPage,showMenuForm,addOptionGroup,addOptionValue,saveMenu,deleteMenu,showStaffForm,saveStaff,toggleUser,savePaymentSettings,closeModal,quickOrder};
 })();

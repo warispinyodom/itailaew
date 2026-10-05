@@ -200,7 +200,25 @@ def table_members(table):
 
 def table_has_member(table, uid):
     return str(uid) in table_members(table)
-
+def move_active_orders(old_table_id, new_table_id, old_number, new_number):
+    orders = get("orders") or {}
+    moved_ids = []
+    for order in (orders.values() if isinstance(orders, dict) else []):
+        if not isinstance(order, dict) or order.get("table_id") != old_table_id:
+            continue
+        if order.get("status") in ("closed", "merged", "cancelled"):
+            continue
+        order_id = order.get("id")
+        if not order_id:
+            continue
+        label = f"ย้ายจากโต๊ะ {old_number} → โต๊ะ {new_number}"
+        patch(f"orders/{order_id}", {"table_id": new_table_id, "table_number": new_number, "moved_from_table": old_number, "moved_to_table": new_number, "moved_at": now_iso(), "move_label": label})
+        moved_ids.append(order_id)
+    kitchen = get("kitchen") or {}
+    for kid, item in (kitchen.items() if isinstance(kitchen, dict) else []):
+        if item.get("order_id") in moved_ids:
+            patch(f"kitchen/{kid}", {"table_number": new_number, "moved_from_table": old_number, "moved_to_table": new_number, "moved_at": now_iso(), "move_label": f"ย้ายจากโต๊ะ {old_number} → โต๊ะ {new_number}"})
+    return moved_ids
 def normalize_available_table(table):
     """Repair stale claims so an available table can be selected."""
     if not table or table.get("status") != "available":
@@ -522,8 +540,9 @@ class handler(BaseHTTPRequestHandler):
                 bill["points_used"] = requested_points
                 bill["points_discount"] = points_reduction
                 customer_points = 0
-                if order.get("customer_id"):
-                    customer_points = int((get_profile(order["customer_id"]) or {}).get("member_points", 0) or 0)
+                points_owner = order.get("points_customer_id") or order.get("customer_id")
+                if points_owner:
+                    customer_points = int((get_profile(points_owner) or {}).get("member_points", 0) or 0)
                 return response(self, 200, {"ok": True, "order": order, "bill": bill, "customer_points": customer_points})
 
             if path == "/api/customer/table-move-requests":
@@ -578,6 +597,15 @@ class handler(BaseHTTPRequestHandler):
                 require_staff(profile)
                 kitchen = get("kitchen") or {}
                 values = list(kitchen.values()) if isinstance(kitchen, dict) else []
+                orders = get("orders") or {}
+                order_map = orders if isinstance(orders, dict) else {}
+                for item in values:
+                    order = order_map.get(item.get("order_id")) if isinstance(order_map, dict) else None
+                    if isinstance(order, dict):
+                        item["table_number"] = order.get("table_number", item.get("table_number"))
+                        for key in ("moved_from_table", "moved_to_table", "moved_at", "move_label"):
+                            if order.get(key) is not None:
+                                item[key] = order[key]
                 values.sort(key=lambda x: x.get("timestamp", ""))
                 return response(self, 200, {"ok": True, "items": values})
 
@@ -790,7 +818,7 @@ class handler(BaseHTTPRequestHandler):
                         continue
                     nid = new_id("order")
                     bill = calculate_bill(group, 0)
-                    child = {**bill, "id": nid, "table_id": order["table_id"], "table_number": order.get("table_number"), "customer_id": cid, "items": group, "status": "open", "created_by": profile["id"], "created_at": now_iso(), "split_from": order_id, "round_id": order.get("round_id") or order_id, "bill_group": "split"}
+                    child = {**bill, "id": nid, "table_id": order["table_id"], "table_number": order.get("table_number"), "customer_id": cid, "points_customer_id": cid, "items": group, "status": "open", "created_by": profile["id"], "created_at": now_iso(), "split_from": order_id, "round_id": order.get("round_id") or order_id, "bill_group": "split"}
                     put(f"orders/{nid}", child)
                     created.append(child)
                 if central:
@@ -1044,7 +1072,12 @@ class handler(BaseHTTPRequestHandler):
                 patch(f"tables/{old_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "member_last_seen": {}, "party_size": None})
                 patch(f"tables/{new_table_id}", {"status": "occupied", "current_order_id": order_id, "current_round_id": old_table.get("current_round_id") or (order or {}).get("round_id") or order_id, "claimed_by": old_table.get("claimed_by") or (members[0] if members else None), "occupant_ids": members, "member_last_seen": presence, "party_size": old_table.get("party_size")})
                 if order_id:
-                    patch(f"orders/{order_id}", {"table_id": new_table_id, "table_number": new_table.get("table_number")})
+                    patch(f"orders/{order_id}", {"table_id": new_table_id, "table_number": new_table.get("table_number"), "moved_from_table": old_table.get("table_number"), "moved_to_table": new_table.get("table_number"), "moved_at": now_iso(), "move_label": f"ย้ายจากโต๊ะ {old_table.get('table_number')} → โต๊ะ {new_table.get('table_number')}"})
+                    kitchen = get("kitchen") or {}
+                    for kid, item in (kitchen.items() if isinstance(kitchen, dict) else []):
+                        if item.get("order_id") == order_id:
+                            patch(f"kitchen/{kid}", {"table_number": new_table.get("table_number"), "moved_from_table": old_table.get("table_number"), "moved_to_table": new_table.get("table_number"), "moved_at": now_iso(), "move_label": f"ย้ายจากโต๊ะ {old_table.get('table_number')} → โต๊ะ {new_table.get('table_number')}"})
+                move_active_orders(old_id, new_table_id, old_table.get("table_number"), new_table.get("table_number"))
                 audit(profile, "MOVE_TABLE", "table", old_id, f"to={new_table_id}")
                 return response(self, 200, {"ok": True, "message": "ย้ายโต๊ะสำเร็จ"})
 
@@ -1237,7 +1270,12 @@ class handler(BaseHTTPRequestHandler):
                     patch(f"tables/{request['table_id']}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "member_last_seen": {}, "party_size": None})
                     patch(f"tables/{request['new_table_id']}", {"status": "occupied", "current_order_id": order_id, "current_round_id": old_table.get("current_round_id") or (old_order or {}).get("round_id") or order_id, "claimed_by": old_table.get("claimed_by") or (members[0] if members else request.get("customer_id")), "occupant_ids": members or [request.get("customer_id")], "member_last_seen": presence, "party_size": old_table.get("party_size")})
                     if order_id:
-                        patch(f"orders/{order_id}", {"table_id": request["new_table_id"], "table_number": new_table.get("table_number")})
+                        patch(f"orders/{order_id}", {"table_id": request["new_table_id"], "table_number": new_table.get("table_number"), "moved_from_table": old_table.get("table_number"), "moved_to_table": new_table.get("table_number"), "moved_at": now_iso(), "move_label": f"ย้ายจากโต๊ะ {old_table.get('table_number')} → โต๊ะ {new_table.get('table_number')}"})
+                        kitchen = get("kitchen") or {}
+                        for kid, item in (kitchen.items() if isinstance(kitchen, dict) else []):
+                            if item.get("order_id") == order_id:
+                                patch(f"kitchen/{kid}", {"table_number": new_table.get("table_number"), "moved_from_table": old_table.get("table_number"), "moved_to_table": new_table.get("table_number"), "moved_at": now_iso(), "move_label": f"ย้ายจากโต๊ะ {old_table.get('table_number')} → โต๊ะ {new_table.get('table_number')}"})
+                    move_active_orders(request["table_id"], request["new_table_id"], old_table.get("table_number"), new_table.get("table_number"))
                     patch(f"table_move_requests/{request_id}", {"status": status, "updated_at": now_iso(), "updated_by": profile.get("id")})
                     return response(self, 200, {"ok": True, "message": "ย้ายโต๊ะจริงสำเร็จ"})
                 patch(f"table_move_requests/{request_id}", {"status": status, "updated_at": now_iso(), "updated_by": profile.get("id")})
@@ -1272,7 +1310,7 @@ class handler(BaseHTTPRequestHandler):
                 if requested_points > available_points:
                     raise ValueError("แต้มไม่เพียงพอ")
                 points_discount(order.get("items", []), requested_points)
-                patch(f"orders/{order_id}", {"status": "waiting_bill", "checkout_requested_at": now_iso(), "points_to_use": requested_points})
+                patch(f"orders/{order_id}", {"status": "waiting_bill", "checkout_requested_at": now_iso(), "points_to_use": requested_points, "points_customer_id": profile.get("id")})
                 table_id = order.get("table_id")
                 if table_id:
                     patch(f"tables/{table_id}", {"status": "waiting_bill"})
@@ -1308,13 +1346,28 @@ class handler(BaseHTTPRequestHandler):
                 bill["manual_discount"] = round(discount, 2)
                 bill["points_used"] = requested_points
                 bill["points_discount"] = points_reduction
-                earned_points = int(subtotal // 10)
-                customer_id = order.get("customer_id")
-                current_points = 0
-                if customer_id:
-                    user = get_profile(customer_id) or {}
-                    current_points = int(user.get("member_points", 0) or 0)
-                    if requested_points > current_points:
+                # Earn points per item owner, not only from the first customer
+                # who opened the shared table bill.
+                earned_by_customer = {}
+                has_item_owner = any(item.get("customer_id") for item in order.get("items", []))
+                for item in order.get("items", []):
+                    # After split-by-customer, use the current owner on each
+                    # item. Unassigned central/counter items do not belong to
+                    # a customer and must not be credited to the first guest.
+                    owner_id = item.get("customer_id")
+                    if not owner_id and not has_item_owner:
+                        owner_id = order.get("customer_id")
+                    if not owner_id:
+                        continue
+                    item_total = float(item.get("unit_price", 0) or 0) * int(item.get("quantity", 0) or 0)
+                    earned_by_customer[str(owner_id)] = earned_by_customer.get(str(owner_id), 0) + item_total
+                earned_by_customer = {uid: int(amount // 10) for uid, amount in earned_by_customer.items()}
+                earned_points = sum(earned_by_customer.values())
+                points_owner = str(order.get("points_customer_id") or order.get("customer_id") or "")
+                points_owner_points = 0
+                if points_owner:
+                    points_owner_points = int((get_profile(points_owner) or {}).get("member_points", 0) or 0)
+                    if requested_points > points_owner_points:
                         raise ValueError("แต้มของลูกค้าไม่เพียงพอ")
                 closed = {**bill, "earned_points": earned_points, "status": "closed", "checkout_lock": None, "closed_at": now_iso(), "closed_by": profile["id"], "payment_method": payment_method}
                 patch(f"orders/{order_id}", closed)
@@ -1328,10 +1381,19 @@ class handler(BaseHTTPRequestHandler):
                         patch(f"tables/{table_id}", {"status": next_status, "current_order_id": next_order.get("id"), "current_round_id": next_order.get("round_id") or next_order.get("id")})
                     else:
                         patch(f"tables/{table_id}", {"status": "available", "current_order_id": None, "current_round_id": None, "claimed_by": None, "occupant_ids": [], "party_size": None, "split_requested": False})
-                if customer_id:
-                    new_points = current_points - requested_points + earned_points
-                    patch(f"users/{customer_id}", {"member_points": new_points})
-                    closed["member_points_after"] = new_points
+                member_points_after = {}
+                for uid, earned_for_user in earned_by_customer.items():
+                    current = int((get_profile(uid) or {}).get("member_points", 0) or 0)
+                    deduction = requested_points if uid == points_owner else 0
+                    new_points = current - deduction + earned_for_user
+                    patch(f"users/{uid}", {"member_points": new_points})
+                    member_points_after[uid] = new_points
+                if points_owner and points_owner not in member_points_after:
+                    new_points = points_owner_points - requested_points
+                    patch(f"users/{points_owner}", {"member_points": new_points})
+                    member_points_after[points_owner] = new_points
+                closed["member_points_after"] = member_points_after
+                closed["earned_points_by_customer"] = earned_by_customer
                 audit(profile, "CHECKOUT_ORDER", "order", order_id, str(bill["total"]))
                 notify_staff("checkout_done", "ปิดบิลสำเร็จ", f"โต๊ะ {order.get('table_number', '-')}", order_id)
                 return response(self, 200, {"ok": True, "order": {**order, **closed}})
